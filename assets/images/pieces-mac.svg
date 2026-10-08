@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" font-family="-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif">
+<title>On the Mac: the Tetherbug window and the tetherbug CLI talk to the background agent over one local socket, agent.sock; the agent keeps the Bluetooth LE link to the phone</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#fff17b"/></marker></defs>
+<rect width="720" height="240" rx="24" fill="#12081a"/>
+<rect x="24" y="24" width="540" height="192" rx="16" fill="none" stroke="#51d136" stroke-width="1.5"/><text x="42" y="50" text-anchor="start" fill="#51d136" font-size="14" font-weight="600" opacity="1">Mac</text>
+<rect x="48" y="68" width="170" height="40" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="133" y="92.55" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">Tetherbug window</text>
+<rect x="48" y="148" width="170" height="40" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="133" y="172.55" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">tetherbug CLI</text>
+<rect x="262" y="110" width="108" height="32" rx="16" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="316" y="130.55" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1" font-family="ui-monospace, Menlo, monospace">agent.sock</text>
+<path d="M218 88 H230 a8 8 0 0 1 8 8 V118 a8 8 0 0 0 8 8" fill="none" stroke="#fff17b" stroke-width="1.8"/><path d="M218 168 H230 a8 8 0 0 0 8 -8 V134 a8 8 0 0 1 8 -8" fill="none" stroke="#fff17b" stroke-width="1.8"/><path d="M246 126 H260" fill="none" stroke="#fff17b" stroke-width="1.8" marker-end="url(#arrow)"/><rect x="404" y="106" width="140" height="40" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="474" y="130.55" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">Background agent</text>
+<path d="M370 126 H402" fill="none" stroke="#fff17b" stroke-width="1.8" marker-end="url(#arrow)"/><path d="M574 126 H636" fill="none" stroke="#fff17b" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#arrow)" marker-start="url(#arrow)"/><text x="605" y="116" text-anchor="middle" fill="#51d136" font-size="12" font-weight="400" opacity="1">BLE</text>
+<rect x="638" y="87" width="44" height="77" rx="8.25" fill="#281336" stroke="#fff17b" stroke-width="2.2"/><circle cx="660" cy="95.25" r="2.75" fill="#fff17b"/>
+<text x="660" y="190" text-anchor="middle" fill="#fff17b" font-size="12" font-weight="400" opacity="0.8">Phone</text>
+</svg>

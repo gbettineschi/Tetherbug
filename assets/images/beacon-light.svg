@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 320" font-family="-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif">
+<title>How macOS spots a Personal Hotspot: an Apple vendor element in the Wi-Fi beacon</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#281336"/></marker></defs>
+<rect width="880" height="320" rx="24" fill="#f7f6f2"/>
+<text x="32" y="44" text-anchor="start" fill="#281336" font-size="18" font-weight="600" opacity="1">Phone's Wi-Fi beacon</text>
+<rect x="32" y="64" width="96" height="56" rx="10" fill="#e7e6e0"/><text x="80" y="90" text-anchor="middle" fill="#281336" font-size="13" font-weight="400" opacity="1">SSID</text>
+<text x="80" y="108" text-anchor="middle" fill="#281336" font-size="13" font-weight="400" opacity="0.7" font-family="ui-monospace, Menlo, monospace">"My Hotspot"</text>
+<rect x="136" y="64" width="96" height="56" rx="10" fill="#e7e6e0"/><text x="184" y="90" text-anchor="middle" fill="#281336" font-size="13" font-weight="400" opacity="1">Security</text>
+<text x="184" y="108" text-anchor="middle" fill="#281336" font-size="13" font-weight="400" opacity="0.7">WPA2</text>
+<rect x="240" y="64" width="160" height="56" rx="10" fill="#281336"/><text x="320" y="89" text-anchor="middle" fill="#e7e6e0" font-size="13" font-weight="600" opacity="1">Apple vendor element</text>
+<text x="320" y="107" text-anchor="middle" fill="#e7e6e0" font-size="12" font-weight="400" opacity="1" font-family="ui-monospace, Menlo, monospace">DD 0A 00:17:F2 06 …</text>
+<text x="320" y="142" text-anchor="middle" fill="#257015" font-size="12" font-weight="400" opacity="1">added by Tetherbug (Android 13+)</text>
+<path d="M320 156 C 320 214, 520 214, 568 150" fill="none" stroke="#281336" stroke-width="2" marker-end="url(#arrow)"/><text x="576" y="44" text-anchor="start" fill="#281336" font-size="18" font-weight="600" opacity="1">macOS Wi-Fi menu</text>
+<g transform="translate(576 60) scale(1.27907)"><rect width="172" height="106" rx="12" fill="#ececec" stroke="#c8c8c8" stroke-width="1"/><text x="12" y="21" text-anchor="start" fill="#1c1c1e" font-size="11" font-weight="600" opacity="1">Wi-Fi</text>
+<rect x="126" y="9" width="34" height="16" rx="8" fill="#9b59b6"/><rect x="141" y="11" width="17" height="12" rx="6" fill="#f4e8f6"/><line x1="11" y1="32" x2="161" y2="32" stroke="#d8d8d8" stroke-width=".8"/><text x="12" y="47" text-anchor="start" fill="#8e8e8e" font-size="8.5" font-weight="600" opacity="1">Personal Hotspot</text>
+<circle cx="22" cy="64" r="10" fill="#9b59b6"/><g fill="none" stroke="#ffffff" stroke-width="3.33333" transform="translate(22 64) scale(0.36)"><clipPath id="link3"><path clip-rule="evenodd" d="M-30 -20 H30 V20 H-30 Z M-10.1667 -0.666667 h8.33333 v8.33333 h-8.33333 Z"/></clipPath><clipPath id="link4"><path clip-rule="evenodd" d="M-30 -20 H30 V20 H-30 Z M1.83333 -7.66667 h8.33333 v8.33333 h-8.33333 Z"/></clipPath><rect x="-17" y="-9.5" width="23" height="13" rx="6.5" clip-path="url(#link3)"/><rect x="-6" y="-3.5" width="23" height="13" rx="6.5" clip-path="url(#link4)"/></g><text x="38" y="68" text-anchor="start" fill="#1c1c1e" font-size="11" font-weight="400" opacity="1" font-family="ui-monospace, Menlo, monospace">My Hotspot</text>
+<line x1="11" y1="80" x2="161" y2="80" stroke="#d8d8d8" stroke-width=".8"/><text x="12" y="96" text-anchor="start" fill="#8e8e8e" font-size="8.5" font-weight="600" opacity="1">Other Networks</text>
+<path d="M156 88 l4 4 l-4 4" fill="none" stroke="#8e8e8e" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="576" y="226" text-anchor="start" fill="#281336" font-size="13" font-weight="600" opacity="1">isPersonalHotspot = true, so macOS:</text>
+<text x="588" y="250" text-anchor="start" fill="#281336" font-size="13" font-weight="400" opacity="1">• shows the link icon</text>
+<text x="588" y="272" text-anchor="start" fill="#281336" font-size="13" font-weight="400" opacity="1">• treats the connection as metered</text>
+<text x="588" y="294" text-anchor="start" fill="#281336" font-size="13" font-weight="400" opacity="1">• applies hotspot auto-join rules</text>
+</svg>

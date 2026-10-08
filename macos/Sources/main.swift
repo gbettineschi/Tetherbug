@@ -1,0 +1,80 @@
+import Foundation
+import UserNotifications
+
+let usage = """
+    usage: tetherbug [command]
+
+      (none)     open the Tetherbug window
+      agent      run the background agent (started as a login item by the app)
+      status     print the phone and hotspot state (--json for machine output)
+      enable     ask the phone to turn its hotspot on
+      disable    ask the phone to turn its hotspot off
+      watch      print the state every time it changes (one JSON line each)
+      debug      on|off: post a notification for everything the agent does
+    """
+
+func describe(_ s: AgentState) -> String {
+    guard s.connected, let status = s.status else {
+        return s.bluetooth == "on" ? "phone not connected" : "Bluetooth \(s.bluetooth)"
+    }
+    let ssid = status.ssid.isEmpty ? "" : " (\(status.ssid))"
+    return "\(s.phone ?? "phone"): hotspot \(status.hotspot.rawValue)\(ssid), battery \(status.battery)%, signal \(status.signal)/4"
+}
+
+/// Whether macOS lets Tetherbug post notifications, asking first if it never has. Blocks.
+func notificationPermissionGranted() -> Bool {
+    let center = UNUserNotificationCenter.current()
+    let done = DispatchSemaphore(value: 0)
+    var status = UNAuthorizationStatus.notDetermined
+    center.getNotificationSettings { status = $0.authorizationStatus; done.signal() }
+    done.wait()
+    if status == .notDetermined {
+        center.requestAuthorization(options: [.alert]) { granted, _ in status = granted ? .authorized : .denied; done.signal() }
+        done.wait()
+    }
+    return status == .authorized || status == .provisional
+}
+
+func cli(_ command: String, json: Bool) -> Never {
+    let ok = SocketClient.request(command) { state in
+        if json || command == "watch" {
+            print(String(decoding: try! JSONEncoder().encode(state), as: UTF8.self))
+            fflush(stdout)
+        } else {
+            print(describe(state))
+        }
+        return command == "watch"
+    }
+    if !ok {
+        FileHandle.standardError.write("tetherbug: the agent isn't running (open Tetherbug to start it)\n".data(using: .utf8)!)
+        exit(1)
+    }
+    exit(0)
+}
+
+let args = CommandLine.arguments.dropFirst()
+switch args.first {
+case "agent":
+    Agent().run()
+case "status", "enable", "disable", "watch":
+    cli(args.first!, json: args.contains("--json"))
+case "debug":
+    switch args.dropFirst().first {
+    case "on": Settings.debugNotifications = true
+    case "off": Settings.debugNotifications = false
+    default: break
+    }
+    print("debug notifications \(Settings.debugNotifications ? "on" : "off")")
+    if Settings.debugNotifications {
+        print(notificationPermissionGranted() ? "notifications allowed" : "notifications not allowed: turn them on in System Settings → Notifications → Tetherbug")
+    }
+case "render-icon": // internal: build.sh renders the app icon with this
+    renderIcon(to: args.dropFirst().first ?? "AppIcon.icns")
+case "-h", "--help", "help":
+    print(usage)
+case nil:
+    runApp()
+default:
+    FileHandle.standardError.write("\(usage)\n".data(using: .utf8)!)
+    exit(2)
+}

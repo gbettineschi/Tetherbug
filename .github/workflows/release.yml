@@ -1,0 +1,188 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# One release at a time; never cancel one half-way through publishing.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.TETHER_KEYSTORE_BASE64 }}
+          TETHER_KEYSTORE_PASSWORD: ${{ secrets.TETHER_KEYSTORE_PASSWORD }}
+          TETHER_KEY_ALIAS: ${{ secrets.TETHER_KEY_ALIAS }}
+          TETHER_KEY_PASSWORD: ${{ secrets.TETHER_KEY_PASSWORD }}
+        run: |
+          [ -n "$KEYSTORE_BASE64" ] || { echo "TETHER_KEYSTORE_BASE64 secret is missing"; exit 1; }
+          export TETHER_KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$TETHER_KEYSTORE"
+          version="${GITHUB_REF_NAME#v}"
+          IFS=. read -r major minor patch <<< "${version%%-*}"
+          code=$((major * 10000 + minor * 100 + patch))
+          nix develop .. --command ./gradlew assembleRelease bundleRelease --no-daemon -PversionName="$version" -PversionCode="$code"
+          mv build/outputs/apk/release/tetherbug-release.apk "$RUNNER_TEMP/tetherbug-$GITHUB_REF_NAME.apk"
+          mkdir -p "$RUNNER_TEMP/play"
+          mv build/outputs/bundle/release/tetherbug-release.aab "$RUNNER_TEMP/play/tetherbug.aab"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android
+          path: ${{ runner.temp }}/tetherbug-*.apk
+      # Play takes the app bundle, not the APK; kept out of the GitHub release.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: play
+          path: ${{ runner.temp }}/play/tetherbug.aab
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build universal Tetherbug.app
+        run: macos/build.sh "$RUNNER_TEMP/out" "${GITHUB_REF_NAME#v}" arm64 x86_64
+      # Developer ID signing and notarization run when their secrets are set; otherwise the app
+      # stays ad-hoc signed (fine for Nix installs, but Gatekeeper warns on downloads).
+      - name: Sign and notarize
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          [ -n "$CERT_P12_BASE64" ] || { echo "No Developer ID secrets; leaving the app ad-hoc signed"; exit 0; }
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          echo "$CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          app="$RUNNER_TEMP/out/Tetherbug.app"
+          codesign --force --options runtime --timestamp --identifier ie.xav.tetherbug --sign "Developer ID Application" "$app"
+          echo "$NOTARY_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/notary.p8"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple "$app"
+      - name: Zip the app
+        run: ditto -c -k --keepParent "$RUNNER_TEMP/out/Tetherbug.app" "$RUNNER_TEMP/Tetherbug-$GITHUB_REF_NAME.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos
+          path: ${{ runner.temp }}/Tetherbug-*.zip
+
+  release:
+    needs: [android, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the GitHub release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{android,macos}"
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+  tap:
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos
+          path: dist
+      - name: Update the Homebrew cask
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          [ -n "$DEPLOY_KEY" ] || { echo "HOMEBREW_TAP_DEPLOY_KEY is missing; skipping the cask"; exit 0; }
+          version="${GITHUB_REF_NAME#v}"
+          sha=$(sha256sum dist/Tetherbug-*.zip | cut -d' ' -f1)
+          key="$RUNNER_TEMP/tap-key"
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          chmod 600 "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:xav-ie/homebrew-tap.git tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/tetherbug.rb <<EOF
+          cask "tetherbug" do
+            version "$version"
+            sha256 "$sha"
+
+            url "https://github.com/xav-ie/Tetherbug/releases/download/v#{version}/Tetherbug-v#{version}.zip"
+            name "Tetherbug"
+            desc "Turns your Android phone's hotspot on when your Mac loses Wi-Fi"
+            homepage "https://github.com/xav-ie/Tetherbug"
+
+            depends_on macos: ">= :sonoma"
+
+            app "Tetherbug.app"
+            binary "#{appdir}/Tetherbug.app/Contents/MacOS/Tetherbug", target: "tetherbug"
+
+            zap trash: [
+              "~/Library/Application Support/Tetherbug",
+              "~/Library/Preferences/ie.xav.tetherbug.settings.plist",
+            ]
+
+            caveats <<~TEXT
+              Tetherbug isn't notarized, so macOS blocks it the first time you open it. Allow it under
+              System Settings → Privacy & Security → Open Anyway.
+            TEXT
+          end
+          EOF
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/tetherbug.rb
+          git commit -m "chore(tetherbug): update to $version"
+          git push
+
+  # Play's internal testing track gets the bundle, the listing text and the images from
+  # fastlane/metadata (release notes from changelogs/<versionCode>.txt). Promote to production in
+  # Play Console. Skipped until the service account's key is a secret.
+  play:
+    needs: [android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: play
+          path: dist
+      - name: Upload to Play's internal testing track
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          [ -n "$PLAY_JSON" ] || { echo "PLAY_SERVICE_ACCOUNT_JSON is missing; skipping Play"; exit 0; }
+          nix run --inputs-from . nixpkgs#fastlane -- supply \
+            --package_name ie.xav.tetherbug --aab dist/tetherbug.aab --track internal \
+            --json_key_data "$PLAY_JSON" --metadata_path fastlane/metadata/android

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 738 632" font-family="-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif">
+<title>When Wi-Fi disconnects: the Mac agent waits 5 seconds for a known network, then asks the Android app to enable the hotspot over encrypted BLE; the app starts tethering through Shizuku and reports the hotspot on with its SSID, and macOS joins it as a Personal Hotspot. Once the Mac is back on regular Wi-Fi and nothing has been connected for 5 minutes, Android turns the hotspot off.</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#fff17b"/></marker></defs>
+<rect width="738" height="632" rx="24" fill="#12081a"/>
+<g transform="translate(31 0)">
+<line x1="150" y1="68" x2="150" y2="564" stroke="#fff17b" stroke-width="1.5" opacity=".6"/>
+<line x1="390" y1="68" x2="390" y2="564" stroke="#fff17b" stroke-width="1.5" opacity=".6"/>
+<line x1="600" y1="68" x2="600" y2="564" stroke="#fff17b" stroke-width="1.5" opacity=".6"/>
+<rect x="75" y="24" width="150" height="44" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="150" y="51" text-anchor="middle" fill="#fff17b" font-size="14" font-weight="400" opacity="1">Mac agent</text>
+
+<rect x="75" y="564" width="150" height="44" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="150" y="591" text-anchor="middle" fill="#fff17b" font-size="14" font-weight="400" opacity="1">Mac agent</text>
+
+<rect x="315" y="24" width="150" height="44" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="390" y="51" text-anchor="middle" fill="#fff17b" font-size="14" font-weight="400" opacity="1">Android app</text>
+
+<rect x="315" y="564" width="150" height="44" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="390" y="591" text-anchor="middle" fill="#fff17b" font-size="14" font-weight="400" opacity="1">Android app</text>
+
+<rect x="525" y="24" width="150" height="44" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="600" y="51" text-anchor="middle" fill="#fff17b" font-size="14" font-weight="400" opacity="1">Shizuku</text>
+
+<rect x="525" y="564" width="150" height="44" rx="10" fill="#281336" stroke="#fff17b" stroke-width="1.5"/><text x="600" y="591" text-anchor="middle" fill="#fff17b" font-size="14" font-weight="400" opacity="1">Shizuku</text>
+
+<rect x="67.4" y="85" width="165.2" height="34" rx="8" fill="#281336" stroke="#51d136" stroke-width="1.5"/><text x="150" y="107" text-anchor="middle" fill="#51d136" font-size="13" font-weight="400" opacity="1">Wi-Fi disconnected</text>
+
+<rect x="30.4" y="133" width="239.2" height="34" rx="8" fill="#281336" stroke="#51d136" stroke-width="1.5"/><text x="150" y="155" text-anchor="middle" fill="#51d136" font-size="13" font-weight="400" opacity="1">wait 5 s for a known network</text>
+
+<path d="M150 206 H386" stroke="#fff17b" stroke-width="1.8" marker-end="url(#arrow)"/><text x="270" y="196" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">enable (encrypted BLE write)</text>
+
+<path d="M390 254 H596" stroke="#fff17b" stroke-width="1.8" marker-end="url(#arrow)"/><text x="495" y="244" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">start tethering</text>
+
+<path d="M600 302 H394" stroke="#fff17b" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#arrow)"/><text x="495" y="292" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">hotspot on</text>
+
+<path d="M390 350 H154" stroke="#fff17b" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#arrow)"/><text x="270" y="340" text-anchor="middle" fill="#fff17b" font-size="13" font-weight="400" opacity="1">status: on, ssid <tspan font-family="ui-monospace, Menlo, monospace">"My Hotspot"</tspan></text>
+
+<rect x="0.8" y="373" width="298.4" height="34" rx="8" fill="#281336" stroke="#51d136" stroke-width="1.5"/><text x="150" y="395" text-anchor="middle" fill="#51d136" font-size="13" font-weight="400" opacity="1">macOS joins it as a Personal Hotspot</text>
+
+<rect x="30.4" y="421" width="239.2" height="34" rx="8" fill="#281336" stroke="#51d136" stroke-width="1.5"/><text x="150" y="443" text-anchor="middle" fill="#51d136" font-size="13" font-weight="400" opacity="1">later: back on regular Wi-Fi</text>
+
+<rect x="274.1" y="469" width="231.8" height="34" rx="8" fill="#281336" stroke="#51d136" stroke-width="1.5"/><text x="390" y="491" text-anchor="middle" fill="#51d136" font-size="13" font-weight="400" opacity="1">nothing connected for 5 min</text>
+
+<rect x="266.7" y="517" width="246.6" height="34" rx="8" fill="#281336" stroke="#51d136" stroke-width="1.5"/><text x="390" y="539" text-anchor="middle" fill="#51d136" font-size="13" font-weight="400" opacity="1">Android turns the hotspot off</text>
+
+</g>
+</svg>

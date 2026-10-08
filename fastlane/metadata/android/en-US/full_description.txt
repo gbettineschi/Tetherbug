@@ -1,0 +1,18 @@
+When your Mac's Wi-Fi disconnects, Tetherbug turns on your Android phone's hotspot and your Mac joins it, the way Instant Hotspot works with an iPhone. No reaching for your phone, no tapping through settings.
+
+How it works
+• Your Mac and phone stay paired over Bluetooth. When the Mac's Wi-Fi disconnects and no known network is around, it asks the phone for its hotspot.
+• Tetherbug turns the hotspot on through Shizuku, and your Mac joins it.
+• The hotspot shows up in your Mac's Wi-Fi menu as a Personal Hotspot, with the link icon, just like an iPhone's.
+• Once nothing has used the hotspot for a while, Android turns it off again. You choose how long.
+
+What you need
+• Android 13 or later
+• Shizuku, which lets Tetherbug switch the hotspot without root
+• A Mac with macOS 14 or later, running the free Tetherbug app for Mac: github.com/xav-ie/Tetherbug
+
+Private by design
+• Tetherbug has no internet access and collects no data.
+• Only a Mac you've paired with your phone can see its status or turn its hotspot on, and the Bluetooth link between them is encrypted.
+
+Open source under the MIT license: github.com/xav-ie/Tetherbug

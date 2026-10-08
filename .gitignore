@@ -1,0 +1,8 @@
+result
+result-*
+android/.gradle/
+android/.kotlin/
+android/build/
+android/local.properties
+assets/drafts/
+__pycache__/
