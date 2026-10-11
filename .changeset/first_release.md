@@ -1,0 +1,7 @@
+---
+default: minor
+---
+
+# First release
+
+Tetherbug turns your Android phone's hotspot on when your Mac's Wi-Fi disconnects, like Instant Hotspot does with an iPhone.

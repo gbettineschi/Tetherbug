@@ -36,7 +36,7 @@
         pkgs:
         let
           unfree = import nixpkgs {
-            inherit (pkgs) system;
+            inherit (pkgs.stdenv.hostPlatform) system;
             config = {
               allowUnfree = true;
               android_sdk.accept_license = true;
@@ -54,6 +54,7 @@
           default = pkgs.mkShell {
             packages = [
               pkgs.just
+              pkgs.knope
               pkgs.zulu21
               sdk
             ];

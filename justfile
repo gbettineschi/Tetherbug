@@ -37,12 +37,6 @@ check:
     git diff --exit-code -- assets
     python3 .github/scripts/check-commit-messages.py origin/main..HEAD
 
-# Tag and push v<version>, which builds and publishes the release; needs its Play changelog first
-release version:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    IFS=. read -r major minor patch <<< "{{ version }}"
-    changelog="fastlane/metadata/android/en-US/changelogs/$((major * 10000 + minor * 100 + patch)).txt"
-    [ -f "$changelog" ] || { echo "Write $changelog first (the stores show it as What's new)"; exit 1; }
-    git tag "v{{ version }}"
-    git push origin "v{{ version }}"
+# Describe a change for the next release's notes (.changeset/); see docs/development.md
+change:
+    nix develop --command knope document-change

@@ -28,9 +28,20 @@ Android drawables, `assets/icon/icon.svg` and the Mac's shape data:
 just icon
 ```
 
-CI builds the Android and Mac apps on every push. Pushing a `v*` tag builds a
-minified, signed APK and attaches it to a GitHub release; Mac release builds
-are still to come.
+CI builds the Android and Mac apps on every push.
+
+## Releasing
+
+Releases use [knope](https://knope.tech) change files. When a change should show up in the
+release notes, add one with `just change`: it asks for the kind of change (`major` breaks
+something, `minor` adds something, `patch` fixes something) and a one-line summary, and writes a
+note to `.changeset/`. Commit it with the change.
+
+Every push to main then updates a "chore: prepare release" pull request, which bumps `VERSION`,
+moves the notes into `CHANGELOG.md` and writes Play's "What's new" text. Merging it publishes:
+the GitHub release with the signed APK and the Mac app, the Homebrew cask, and Play's internal
+testing track. To choose the version yourself (such as 1.0.0), run the Prepare release workflow
+by hand with a version.
 
 ## Documentation images
 
