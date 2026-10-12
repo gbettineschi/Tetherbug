@@ -200,9 +200,9 @@ jobs:
           git commit -m "chore(tetherbug): update to $version"
           git push
 
-  # Play's internal testing track gets the bundle, the listing text and the images from
-  # fastlane/metadata (release notes from changelogs/<versionCode>.txt, which play-changelog.py writes). Promote to production in
-  # Play Console. Skipped until the service account's key is a secret.
+  # Play's internal testing track gets the bundle and its release notes (changelogs/<versionCode>.txt,
+  # which play-changelog.py writes), plus the listing text and images from fastlane/metadata once
+  # PLAY_UPLOAD_LISTING is set. Promote to production in Play Console. Skipped without the key.
   play:
     needs: [version, android]
     runs-on: ubuntu-latest
@@ -221,8 +221,13 @@ jobs:
       - name: Upload to Play's internal testing track
         env:
           PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          # Play refuses API edits to the listing until the app has passed its first review; set
+          # this repo variable to true after that so the listing text and images upload too.
+          UPLOAD_LISTING: ${{ vars.PLAY_UPLOAD_LISTING }}
         run: |
           [ -n "$PLAY_JSON" ] || { echo "PLAY_SERVICE_ACCOUNT_JSON is missing; skipping Play"; exit 0; }
+          listing=(--skip_upload_metadata --skip_upload_images --skip_upload_screenshots)
+          [ "$UPLOAD_LISTING" = true ] && listing=()
           nix run --inputs-from . nixpkgs#fastlane -- supply \
             --package_name ie.xav.tetherbug --aab dist/tetherbug.aab --track internal \
-            --json_key_data "$PLAY_JSON" --metadata_path fastlane/metadata/android
+            --json_key_data "$PLAY_JSON" --metadata_path fastlane/metadata/android "${listing[@]}"
