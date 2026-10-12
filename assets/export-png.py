@@ -10,6 +10,7 @@ Run after build.py whenever a store image changes, on a Mac (the images use Appl
 """
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 here = Path(__file__).parent
@@ -29,7 +30,11 @@ for old in (images / "phoneScreenshots").glob("*.png"):
 for i, svg in enumerate(screenshots, 1):
     render(svg, images / "phoneScreenshots" / f"{i}.png")
 render(here / "store/feature-graphic.svg", images / "featureGraphic.png")
-render(here / "icon/icon.svg", images / "icon.png", "-w", "512", "-h", "512")
+# Play rounds the store icon itself, so it takes a full square: icon.svg's circle filled out.
+with tempfile.NamedTemporaryFile("w", suffix=".svg") as square:
+    square.write((here / "icon/icon.svg").read_text().replace('<circle cx="256" cy="256" r="256"', '<rect width="512" height="512"', 1))
+    square.flush()
+    render(Path(square.name), images / "icon.png", "-w", "512", "-h", "512")
 # The README's hero: the feature graphic, for each theme. PNG, since GitHub won't load the phone's
 # screenshot from inside an SVG shown as an image.
 render(here / "store/feature-graphic.svg", here / "readme/hero.png")
