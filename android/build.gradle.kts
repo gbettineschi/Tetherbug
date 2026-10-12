@@ -38,7 +38,8 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // Unsigned without TETHER_KEYSTORE, as F-Droid builds it (and signs it itself).
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
