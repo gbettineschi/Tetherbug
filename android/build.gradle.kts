@@ -17,9 +17,9 @@ android {
         // SoftApConfiguration.Builder#setVendorElements is Android 13+.
         minSdk = 33
         targetSdk = 37
-        // Set from the release tag in CI: -PversionName=0.1.0 -PversionCode=100.
-        versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = findProperty("versionName") as String? ?: "0.0.0-dev"
+        // From gradle.properties, which each release updates.
+        versionCode = (property("versionCode") as String).toInt()
+        versionName = property("versionName") as String
     }
 
     signingConfigs {
@@ -44,6 +44,11 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    // The APK's dependency list is a Google-only encrypted blob, which F-Droid and IzzyOnDroid reject.
+    dependenciesInfo {
+        includeInApk = false
     }
 
     // The store screenshots render on the JVM (Robolectric); see ScreenshotTest.

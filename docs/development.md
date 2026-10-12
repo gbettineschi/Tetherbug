@@ -37,8 +37,8 @@ release notes, add one with `just change`: it asks for the kind of change (`majo
 something, `minor` adds something, `patch` fixes something) and a one-line summary, and writes a
 note to `.changeset/`. Commit it with the change.
 
-Every push to main then updates a "chore: prepare release" pull request, which bumps `VERSION`,
-moves the notes into `CHANGELOG.md` and writes Play's "What's new" text. Merging it publishes:
+Every push to main then updates a "chore: prepare release" pull request, which bumps the version
+in `android/gradle.properties`, moves the notes into `CHANGELOG.md` and writes Play's "What's new" text. Merging it publishes:
 the GitHub release with the signed APK and the Mac app, the Homebrew cask, and Play's internal
 testing track. To choose the version yourself (such as 1.0.0), run the Prepare release workflow
 by hand with a version.

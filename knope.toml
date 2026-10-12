@@ -2,7 +2,7 @@
 # (.github/workflows/prepare-release.yml), and merging it publishes (.github/workflows/release.yml).
 
 [package]
-versioned_files = [{ path = "VERSION", regex = "^(?<version>\\S+)" }]
+versioned_files = [{ path = "android/gradle.properties", regex = "versionName=(?<version>\\S+)" }]
 changelog = "CHANGELOG.md"
 assets = "artifacts/*"
 
@@ -25,14 +25,14 @@ command = "git switch -c release"
 [[workflows.steps]]
 type = "PrepareRelease"
 
-# Play's "What's new" for this version, from the same notes.
+# The matching versionCode, and Play's "What's new" from the same notes.
 [[workflows.steps]]
 type = "Command"
-command = "python3 .github/scripts/play-changelog.py"
+command = "python3 .github/scripts/prepare-release.py"
 
 [[workflows.steps]]
 type = "Command"
-command = "git add fastlane"
+command = "git add android/gradle.properties fastlane"
 
 [[workflows.steps]]
 type = "Command"

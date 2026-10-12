@@ -1,6 +1,7 @@
 name: Release
 
-# Runs when the release PR from prepare-release.yml merges, publishing the version in VERSION.
+# Runs when the release PR from prepare-release.yml merges, publishing the version in
+# android/gradle.properties.
 # To retry one that failed part-way, re-run its failed jobs from the run's page.
 on:
   pull_request:
@@ -32,7 +33,7 @@ jobs:
       - id: version
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          echo "version=$(sed -n 's/^versionName=//p' android/gradle.properties)" >> "$GITHUB_OUTPUT"
 
   android:
     needs: [version]
@@ -57,9 +58,7 @@ jobs:
           [ -n "$KEYSTORE_BASE64" ] || { echo "TETHER_KEYSTORE_BASE64 secret is missing"; exit 1; }
           export TETHER_KEYSTORE="$RUNNER_TEMP/release.jks"
           echo "$KEYSTORE_BASE64" | base64 -d > "$TETHER_KEYSTORE"
-          IFS=. read -r major minor patch <<< "${VERSION%%-*}"
-          code=$((major * 10000 + minor * 100 + patch))
-          nix develop .. --command ./gradlew assembleRelease bundleRelease --no-daemon -PversionName="$VERSION" -PversionCode="$code"
+          nix develop .. --command ./gradlew assembleRelease bundleRelease --no-daemon
           mv build/outputs/apk/release/tetherbug-release.apk "$RUNNER_TEMP/tetherbug-v$VERSION.apk"
           mkdir -p "$RUNNER_TEMP/play"
           mv build/outputs/bundle/release/tetherbug-release.aab "$RUNNER_TEMP/play/tetherbug.aab"
@@ -201,7 +200,7 @@ jobs:
           git push
 
   # Play's internal testing track gets the bundle and its release notes (changelogs/<versionCode>.txt,
-  # which play-changelog.py writes), plus the listing text and images from fastlane/metadata once
+  # which prepare-release.py writes), plus the listing text and images from fastlane/metadata once
   # PLAY_UPLOAD_LISTING is set. Promote to production in Play Console. Skipped without the key.
   play:
     needs: [version, android]
