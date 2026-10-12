@@ -46,17 +46,17 @@ settings, plus a `tetherbug` command for scripts and
 
 ## Getting started
 
-- **Phone:** install the Android app (Android 13+), then follow its setup
+- **Phone:** install the Android app (Android 13+) from the
+  [releases page](https://github.com/xav-ie/Tetherbug/releases), then follow its setup
   checklist: Bluetooth and notification permissions, Shizuku, start the
   service. Turn on **Look like an iPhone hotspot** for the Personal Hotspot
   marker, and pick how soon an unused hotspot turns off.
 - **Mac, fastest with Nix:** `nix run github:xav-ie/Tetherbug`, or install it
   with the [nix-darwin module](docs/macos.md#with-nix-fastest) (macOS 14+).
+- **Mac, with Homebrew:** `brew install xav-ie/tap/tetherbug`.
 - **Mac, everything else:** see [Tetherbug for Mac](docs/macos.md) for pairing,
   settings and other ways to install.
 - **SketchyBar:** see [Tetherbug in SketchyBar](docs/sketchybar.md).
-
-Releases aren't published yet; until then, use Nix or build from source ([Development](docs/development.md)).
 
 ## Documentation
 

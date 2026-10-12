@@ -51,9 +51,27 @@ inputs.tetherbug.url = "github:xav-ie/Tetherbug";
 With the module you can leave **Run in the background** off: launchd already keeps the agent
 running. Open Tetherbug once from Applications so macOS asks for Bluetooth access.
 
+### With Homebrew
+
+```sh
+brew install xav-ie/tap/tetherbug
+```
+
+That installs **Tetherbug.app** in Applications and the `tetherbug` command.
+
+### From the releases page
+
+Download `Tetherbug-v<version>.zip` from the
+[releases page](https://github.com/xav-ie/Tetherbug/releases), unzip it, and move **Tetherbug.app** to
+Applications.
+
+Tetherbug isn't notarized by Apple yet, so the first time you open a Homebrew or downloaded copy,
+macOS blocks it. Allow it under **System Settings → Privacy & Security → Open Anyway**. Nix installs
+aren't affected.
+
 ### From source
 
-Releases aren't published yet; see [Development](development.md) to build the app yourself.
+See [Development](development.md) to build the app yourself.
 
 ## 4. Run Tetherbug
 
