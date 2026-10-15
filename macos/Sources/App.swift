@@ -389,6 +389,23 @@ final class AppWindow: NSWindow {
     override var canBecomeMain: Bool { true }
     override func performClose(_ sender: Any?) { close() }
 
+    // macOS won't minimise a borderless window, so it takes an invisible title bar while minimised.
+    override func miniaturize(_ sender: Any?) {
+        styleMask.formUnion([.titled, .fullSizeContentView])
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            standardWindowButton(button)?.isHidden = true
+        }
+        super.miniaturize(sender)
+    }
+
+    func dropTitleBarOnRestore() {
+        NotificationCenter.default.addObserver(forName: NSWindow.didDeminiaturizeNotification, object: self, queue: .main) { [weak self] _ in
+            self?.styleMask.subtract([.titled, .fullSizeContentView])
+        }
+    }
+
     // VoiceOver gets real window buttons in place of the drawn bubbles, which it doesn't see.
     private lazy var minimizeButton = WindowButton("Minimize", subrole: .minimizeButton, window: self) { [weak self] in self?.miniaturize(nil) }
     private lazy var closeButton = WindowButton("Close", subrole: .closeButton, window: self) { [weak self] in self?.close() }
@@ -444,7 +461,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Content fills the whole window; the themed view draws its own close/minimise controls.
         // Borderless and transparent: the content draws the rounded, bevelled window body itself, and
         // the system shadow follows that shape.
-        window = AppWindow(contentRect: .zero, styleMask: [.borderless, .closable, .miniaturizable], backing: .buffered, defer: false)
+        let window = AppWindow(contentRect: .zero, styleMask: [.borderless, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.dropTitleBarOnRestore()
+        self.window = window
         window.title = "Tetherbug"
         window.isOpaque = false
         window.backgroundColor = .clear
