@@ -7,7 +7,7 @@ cask "tetherbug-personal" do
   desc "Android hotspot control from a native Mac menu"
   homepage "https://github.com/gbettineschi/Tetherbug"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Tetherbug.app"
   binary "#{appdir}/Tetherbug.app/Contents/MacOS/Tetherbug", target: "tetherbug"
