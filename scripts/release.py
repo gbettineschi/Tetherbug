@@ -41,6 +41,10 @@ def main():
         remote_sha = run("gh", "api", f"repos/{REPO}/commits/main", "--jq", ".sha", capture=True)
         if remote_sha != sha:
             parser.error("Push this commit to the fork's main branch before publishing.")
+        existing = run("git", "ls-remote", "--tags", f"https://github.com/{REPO}.git",
+                       f"refs/tags/{tag}", capture=True)
+        if existing:
+            parser.error("This version already has a remote tag. Publish a new version instead.")
 
     config_path = Path(os.environ.get("TETHER_SIGNING_CONFIG",
                       str(Path.home() / ".local/share/tetherbug/android-signing/signing.json")))
@@ -89,7 +93,10 @@ def main():
                                    "sourceCommit": sha, "androidCertificateSha256": CERT,
                                    "macosSigning": "ad-hoc; not notarized"}, indent=2) + "\n")
     if args.publish:
-        run("gh", "release", "create", tag, "--repo", REPO, "--target", sha,
+        # Atomic ref creation also rejects a tag that appeared after the preflight check.
+        run("gh", "api", f"repos/{REPO}/git/refs", "--method", "POST",
+            "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}", capture=True)
+        run("gh", "release", "create", tag, "--repo", REPO, "--verify-tag",
             "--title", f"Tetherbug Personal {version}", "--notes-file", str(notes),
             "--latest", *(str(p) for p in [*assets, checksums, manifest]))
     print(f"{'Published' if args.publish else 'Built'} {version}: {out}")

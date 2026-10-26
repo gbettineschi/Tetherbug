@@ -11,10 +11,11 @@ stdenv.mkDerivation {
   pname = "tetherbug";
   inherit version;
   src = lib.fileset.toSource {
-    root = ./.;
+    root = ../.;
     fileset = lib.fileset.unions [
       ./Sources
       ./build.sh
+      ../LICENSE
     ];
   };
 
@@ -25,7 +26,7 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    SWIFTC=swiftc NO_SIGN=1 bash build.sh "$out/Applications" ${version} ${stdenv.hostPlatform.darwinArch}
+    SWIFTC=swiftc NO_SIGN=1 bash macos/build.sh "$out/Applications" ${version} ${stdenv.hostPlatform.darwinArch}
     runHook postBuild
   '';
 
@@ -43,7 +44,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Turn your Android phone's hotspot on from your Mac, iPhone Instant Hotspot style";
-    homepage = "https://github.com/xav-ie/Tetherbug";
+    homepage = "https://github.com/gbettineschi/Tetherbug";
     platforms = lib.platforms.darwin;
     license = lib.licenses.mit;
     mainProgram = "tetherbug";
