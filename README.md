@@ -10,6 +10,18 @@ Download the APK and universal Mac app from **[this fork’s releases](https://g
 - **macOS:** download `Tetherbug-v<version>.zip`, quit Tetherbug, and replace the existing app. The bundle ID is unchanged, so preferences stay in place. These builds are ad-hoc signed and not notarized: macOS may require Open Anyway and renewed Bluetooth approval. There is no embedded automatic updater.
 - Official changes can be reviewed and merged into this fork before making a new personal release. Updates are not merged automatically.
 
+For Homebrew-managed Mac updates, this repository also provides a personal cask:
+
+```sh
+brew tap gbettineschi/tetherbug https://github.com/gbettineschi/Tetherbug
+brew install --cask gbettineschi/tetherbug/tetherbug-personal
+# Later:
+brew update
+brew upgrade --cask gbettineschi/tetherbug/tetherbug-personal
+```
+
+If an existing copy is already running, quit it and deliberately choose the Homebrew installation before switching; these commands are not needed for Android/Obtainium.
+
 See [release and signing instructions](docs/personal-releases.md), [Mac setup](docs/macos.md), and the [BLE protocol](docs/protocol.md).
 
 ## Changes in this fork

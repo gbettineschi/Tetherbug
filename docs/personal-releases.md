@@ -20,7 +20,7 @@ Official upstream, F-Droid or other independently signed APKs cannot update this
 
 The release ZIP contains a universal Apple Silicon/Intel app. Quit Tetherbug, replace the existing app at the same location, and reopen it. Preserve its Application Support and preferences files. The bundle ID is unchanged; the ad-hoc signing identity is not stable across builds, so Bluetooth permission can require renewed approval. Downloads are not notarized: allow the app in System Settings → Privacy & Security if macOS blocks it.
 
-Homebrew can track a custom cask from this repository. An embedded Sparkle updater would require a separate implementation; it is not included. The Latest app only covers supported update mechanisms such as Sparkle and the App Store, so it cannot discover these plain ZIP releases automatically.
+Homebrew can track the included `Casks/tetherbug-personal.rb` from this repository. Set it up with `brew tap gbettineschi/tetherbug https://github.com/gbettineschi/Tetherbug`, then install `gbettineschi/tetherbug/tetherbug-personal`. Later, `brew update` followed by `brew upgrade --cask gbettineschi/tetherbug/tetherbug-personal` installs the fork’s new Mac releases. This does not create a background update schedule. Do not install a second copy while the current one is running. An embedded Sparkle updater would require a separate implementation; it is not included. The Latest app only covers supported update mechanisms such as Sparkle and the App Store, so it cannot discover these plain ZIP releases automatically.
 
 ## Making the next release
 
@@ -29,6 +29,8 @@ Homebrew can track a custom cask from this repository. An embedded Sparkle updat
 3. Commit the release sources and push them to this fork's `main`.
 4. On a Mac with Command Line Tools, JDK 21 and the Android SDK, set `JAVA_HOME`, `ANDROID_HOME` and optionally `GRADLE_USER_HOME`. Select a compatible SDK with `SDKROOT` if required by the installed Swift tools.
 5. Run `python3 scripts/release.py --publish`. Omit `--publish` to build without uploading. It runs the focused Android regression suites and all Mac tests, builds the signed APK and universal app, verifies the Android certificate and identity, and publishes the APK, ZIP, SHA-256 checksums and source manifest. It never installs either app or changes device settings.
+
+6. After publishing, update `Casks/tetherbug-personal.rb` with that version and the Mac ZIP’s SHA-256 from `SHA256SUMS.txt`; commit and push this metadata change to `main`. This keeps the Homebrew channel on the new release. Do not change the already published source tag.
 
 The private signing configuration is read from `~/.local/share/tetherbug/android-signing/signing.json`, or `TETHER_SIGNING_CONFIG`. It contains `keystore` (path to the retained PKCS12/JKS file), `alias`, and `password`. A relative key path is resolved next to the JSON. Keep both files private and backed up; never commit them. No password is printed or included in command-line arguments.
 

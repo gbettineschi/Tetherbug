@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -39,7 +40,7 @@ jobs:
 
   android:
     needs: changes
-    if: needs.changes.outputs.android == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -53,7 +54,7 @@ jobs:
 
   macos:
     needs: changes
-    if: needs.changes.outputs.macos == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.macos == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     permissions:
