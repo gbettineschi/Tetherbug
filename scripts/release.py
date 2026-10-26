@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build personal releases locally; only --publish uploads anything to GitHub."""
+"""Build personal packages locally or request their automatic GitHub release."""
 import argparse
 import hashlib
 import json
@@ -23,7 +23,11 @@ def run(*args, env=None, capture=False, cwd=ROOT):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--existing-tag", action="store_true",
+                        help="Publish the exact version tag that triggered Actions")
     args = parser.parse_args()
+    if args.existing_tag and not args.publish:
+        parser.error("--existing-tag requires --publish.")
     if run("git", "status", "--porcelain", capture=True):
         parser.error("Commit the release tree first; builds must match their source tag.")
     properties = dict(re.findall(r"^(versionName|versionCode)=(.+)$",
@@ -37,14 +41,16 @@ def main():
     tag = f"v{version}"
     sha = run("git", "rev-parse", "HEAD", capture=True)
     if args.publish:
-        # Publish only a commit already present on the fork's main branch.
-        remote_sha = run("gh", "api", f"repos/{REPO}/commits/main", "--jq", ".sha", capture=True)
-        if remote_sha != sha:
-            parser.error("Push this commit to the fork's main branch before publishing.")
-        existing = run("git", "ls-remote", "--tags", f"https://github.com/{REPO}.git",
-                       f"refs/tags/{tag}", capture=True)
-        if existing:
-            parser.error("This version already has a remote tag. Publish a new version instead.")
+        try:
+            verify_publication_source(tag, sha, args.existing_tag)
+        except ValueError as error:
+            parser.error(str(error))
+        if not args.existing_tag:
+            # A local request starts the one automatic publisher. It must not
+            # also create a competing local release for the same version.
+            run("git", "push", f"https://github.com/{REPO}.git", f"{sha}:refs/tags/{tag}")
+            print(f"Tagged {tag}; GitHub Actions will build, sign and publish both apps.")
+            return
 
     config_path = Path(os.environ.get("TETHER_SIGNING_CONFIG",
                       str(Path.home() / ".local/share/tetherbug/android-signing/signing.json")))
@@ -93,13 +99,28 @@ def main():
                                    "sourceCommit": sha, "androidCertificateSha256": CERT,
                                    "macosSigning": "ad-hoc; not notarized"}, indent=2) + "\n")
     if args.publish:
-        # Atomic ref creation also rejects a tag that appeared after the preflight check.
-        run("gh", "api", f"repos/{REPO}/git/refs", "--method", "POST",
-            "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}", capture=True)
         run("gh", "release", "create", tag, "--repo", REPO, "--verify-tag",
             "--title", f"Tetherbug Personal {version}", "--notes-file", str(notes),
             "--latest", *(str(p) for p in [*assets, checksums, manifest]))
     print(f"{'Published' if args.publish else 'Built'} {version}: {out}")
+
+
+def verify_publication_source(tag, sha, existing_tag):
+    if existing_tag:
+        if os.environ.get("GITHUB_REF") != f"refs/tags/{tag}":
+            raise ValueError("The Actions tag must match android/gradle.properties.")
+        remote_sha = run("gh", "api", f"repos/{REPO}/commits/{tag}", "--jq", ".sha", capture=True)
+        if remote_sha != sha:
+            raise ValueError("The remote version tag differs from this source commit.")
+        run("git", "merge-base", "--is-ancestor", sha, "origin/main")
+        return
+    remote_sha = run("gh", "api", f"repos/{REPO}/commits/main", "--jq", ".sha", capture=True)
+    if remote_sha != sha:
+        raise ValueError("Push this commit to the fork's main branch before publishing.")
+    existing = run("git", "ls-remote", "--tags", f"https://github.com/{REPO}.git",
+                   f"refs/tags/{tag}", capture=True)
+    if existing:
+        raise ValueError("This version already has a remote tag. Publish a new version instead.")
 
 
 if __name__ == "__main__":

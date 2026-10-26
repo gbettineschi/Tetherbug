@@ -14,7 +14,7 @@ The personal signing certificate SHA-256 is:
 66e308329c2e4813943e4cc1c9672831fb8897e3d65ac5d1ef252a90ce7a9be6
 ```
 
-This matches the retained `0.1.1-btfix.4` APK. Future updates must keep that certificate and increase Android's `versionCode`. The release builder checks the certificate and package/version. Keep a private backup of the original keystore and its password; losing them means future APKs cannot update this installation in place. They are not uploaded to GitHub, including Actions secrets.
+This matches the retained `0.1.1-btfix.4` APK. Future updates must keep that certificate and increase Android's `versionCode`. The release builder checks the certificate and package/version. Keep a private backup of the original keystore and its password; losing them means future APKs cannot update this installation in place. The retained key is backed up locally and stored in encrypted GitHub Actions environment secrets for automatic releases; it is never committed or included in downloads.
 
 Official upstream, F-Droid or other independently signed APKs cannot update this installation directly. Replacing it with another signing key requires uninstalling and resets app settings and permissions. A fork release preserves the patches; official changes should first be merged into the fork.
 
@@ -28,18 +28,20 @@ On the tested Mac, the first registration of the downloaded ad-hoc build was mar
 
 ## Making the next release
 
-1. Review and merge desired upstream commits. Keep the personal Android changes and package ID. Do not replace the fork branch with upstream's branch.
-2. Update `android/gradle.properties`: increase both numeric `versionName` and `versionCode`. Start above versionCode **105**, used by the old personal build. Add `releases/<version>.md` with notes for both platforms.
-3. Commit the release sources and push them to this fork's `main`.
-4. On a Mac with Command Line Tools, JDK 21 and the Android SDK, set `JAVA_HOME`, `ANDROID_HOME` and optionally `GRADLE_USER_HOME`. Select a compatible SDK with `SDKROOT` if required by the installed Swift tools.
-5. Run `python3 scripts/release.py --publish`. Omit `--publish` to build without uploading. It runs the focused Android regression suites and all Mac tests, builds the signed APK and universal app, verifies the Android certificate and identity, and publishes the APK, ZIP, SHA-256 checksums and source manifest. It never installs either app or changes device settings.
+1. Review and merge wanted upstream commits. Preserve the personal changes, Android package ID and signing identity.
+2. Update `android/gradle.properties`: increase numeric `versionName` and `versionCode` above the preceding release. Add `releases/<version>.md` with notes for both platforms.
+3. Commit and push the reviewed source to this fork's `main`. Push a matching `vX.Y.Z` tag, or run `python3 scripts/release.py --publish` from that clean commit to push the tag for you.
+4. **Release personal apps** tests the focused Android regressions and all Mac tests, builds/signs both apps, checks the retained Android certificate and package/version, and publishes the APK, universal Mac ZIP, checksums and source manifest.
+5. Its dependent tap job updates the shared Homebrew recipe automatically. Obtainium discovers the Android APK from the same GitHub release. There is exactly one APK per release, so no APK filter is needed.
 
-6. Publishing the GitHub release automatically runs **Update Homebrew tap**. It downloads that release's Mac ZIP, computes its SHA-256 and updates the shared tap. No manual recipe change is needed. If the tap step fails, run **Update Homebrew tap** manually with the existing tag; do not replace published downloads.
+The one automatic publisher owns release creation. The local `--publish` command requests that workflow; it no longer builds a second competing release. The automatic job checks that its tag points to the exact source commit on `main`. Published downloads are immutable: use a new version instead of replacing assets. To retry only the tap, run **Update Homebrew tap** with the existing tag.
 
-The tap job runs on Linux and uses a tap-only `TAP_DEPLOY_KEY`. No Android signing key is uploaded to Actions. A GitHub release created locally with the normal authenticated `gh` session triggers it; a release created by another workflow's `GITHUB_TOKEN` must call the shared publisher explicitly.
+## Signing and local verification
 
-The private signing configuration is read from `~/.local/share/tetherbug/android-signing/signing.json`, or `TETHER_SIGNING_CONFIG`. It contains `keystore` (path to the retained PKCS12/JKS file), `alias`, and `password`. A relative key path is resolved next to the JSON. Keep both files private and backed up; never commit them. No password is printed or included in command-line arguments.
+The Android key, password and alias are encrypted secrets in the **android-release** Actions environment. That environment permits version tags and `main` manual verification, without pull-request access. The key is restored to a private temporary file on a disposable runner and removed afterward. This is a public repository; secret values are not public. A person able to alter trusted release workflows could misuse signing access, so keep repository write access controlled.
 
-GitHub Actions verifies builds/tests and publishes the Homebrew recipe after a release. Application release signing stays local; the upstream Play Store jobs remain absent.
+For a non-publishing CI check, run **Release personal apps** manually on `main`. It builds and verifies the packages, saves verification artifacts for one day, and creates no release or tap update.
 
-Before publishing, the builder requires a clean source tree and verifies that its commit is already the fork's `main`. Release tags are immutable in this workflow: publish a new version rather than replacing an existing asset. The MIT license is included in both app bundles.
+Local build-only packaging is still available with `python3 scripts/release.py`. It reads `~/.local/share/tetherbug/android-signing/signing.json`, or `TETHER_SIGNING_CONFIG`, containing `keystore` (path), `alias`, and `password`. Relative key paths are resolved next to that JSON. Use Command Line Tools, JDK21 and Android SDK37; set `JAVA_HOME` and `ANDROID_HOME` as needed. Keep the retained key and config private and backed up. No password is printed or passed as a command-line argument. Builds do not install apps or change device settings.
+
+The Mac build is ad-hoc signed and not notarized; no Apple signing key is uploaded. The MIT licence is included in both bundles. GitHub's standard hosted runner execution is free for this public repository.

@@ -28,6 +28,8 @@ When moving from a copy at another location, turn off **Launch at login** in tha
 
 The same tap also carries [Agent Handler](https://github.com/gbettineschi/agent-handler): `brew install --cask gbettineschi/tap/agent-handler`.
 
+Pushing a reviewed version tag builds and signs both apps, publishes their GitHub release, and updates Homebrew automatically. Android updates keep the same personal signing key.
+
 See [release and signing instructions](docs/personal-releases.md), [Mac setup](docs/macos.md), and the [BLE protocol](docs/protocol.md).
 
 ## Changes in this fork
