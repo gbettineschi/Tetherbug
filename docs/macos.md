@@ -48,7 +48,7 @@ inputs.tetherbug.url = "github:gbettineschi/Tetherbug";
 }
 ```
 
-With the module you can leave **Run in the background** off: launchd already keeps the agent
+With the module you can leave **Launch at login** off: launchd already keeps the agent
 running. Open Tetherbug once from Applications so macOS asks for Bluetooth access.
 
 ### Updates
@@ -71,7 +71,7 @@ See [Development](development.md) to build the app yourself.
 
 ## 4. Run Tetherbug
 
-Open Tetherbug and turn on **Run in the background**. macOS may ask you to allow it under
+Open Tetherbug and turn on **Launch at login**. macOS may ask you to allow it under
 **System Settings → General → Login Items**, and asks once for Bluetooth access. The window then shows
 your phone, its hotspot state and battery.
 
@@ -86,7 +86,7 @@ The existing background agent also displays a native hotspot icon. No extra help
 - The icon follows the phone's reported state. While awaiting confirmation, or if the phone/Shizuku
   is unavailable, clicking cannot issue another toggle. Errors appear in the menu and settings window.
 
-Keep **Run in the background** enabled to retain the menu when the settings window closes. Without
+Keep **Launch at login** enabled to retain the menu when the settings window closes. Without
 it, the menu exists only while the window's session agent is running. Menu **Quit Tetherbug** exits
 the agent and an open settings window; it does not turn off the phone's hotspot or unregister the login item.
 
@@ -98,7 +98,7 @@ This remains Tetherbug's Bluetooth/Shizuku integration. The native Personal Hots
 | --- | --- | --- |
 | Turn on hotspot when Wi-Fi is disconnected | on | When Wi-Fi stays disconnected for the wait below, ask the phone to turn its hotspot on. |
 | After disconnected for | 5 sec | How long to give macOS's own auto-join (which bursts on wake) before asking, in seconds (0–600). |
-| Run in the background | off | Starts the agent at login and keeps it running when the window is closed. |
+| Launch at login | off | Starts the agent at login and keeps it running when the window is closed. |
 
 ### Command line
 

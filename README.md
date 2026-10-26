@@ -20,7 +20,7 @@ brew update
 brew upgrade --cask gbettineschi/tetherbug/tetherbug-personal
 ```
 
-When moving from a copy at another location, turn off **Run in the background** in that copy and quit it first. Install and open the Homebrew copy, then enable **Run in the background** there. This moves the login helper to the new app location without deleting preferences. These commands are not needed for Android/Obtainium.
+When moving from a copy at another location, turn off **Launch at login** in that copy and quit it first. Install and open the Homebrew copy, then enable **Launch at login** there. This moves the login helper to the new app location without deleting preferences. These commands are not needed for Android/Obtainium.
 
 See [release and signing instructions](docs/personal-releases.md), [Mac setup](docs/macos.md), and the [BLE protocol](docs/protocol.md).
 
@@ -34,7 +34,7 @@ See [release and signing instructions](docs/personal-releases.md), [Mac setup](d
 
 1. Install the personal Android APK, allow Bluetooth access and Shizuku, and start its service. Notifications are optional. Android 13+ is required.
 2. Pair the phone and Mac in their Bluetooth settings.
-3. Open the Mac app, allow Bluetooth access, and enable Run in the background. macOS 14+ is required.
+3. Open the Mac app, allow Bluetooth access, and enable Launch at login. macOS 14+ is required.
 4. Use the menu-bar Mobile Hotspot switch, or enable Automatic mode to request the hotspot when Mac Wi-Fi stays disconnected.
 
 ## Samsung / Personal Hotspot icon limitation
