@@ -1,0 +1,20 @@
+name: Update Homebrew tap
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published release tag (vX.Y.Z)
+        required: true
+        type: string
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  tap:
+    uses: gbettineschi/homebrew-tap/.github/workflows/publish.yml@main
+    with:
+      package: tetherbug-personal
+      tag: ${{ inputs.tag || github.event.release.tag_name }}
+    secrets:
+      TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}

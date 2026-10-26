@@ -14,19 +14,19 @@ Download the APK and universal Mac app from **[this fork’s releases](https://g
 - **macOS:** download `Tetherbug-v<version>.zip`, quit Tetherbug, and replace the existing app. The bundle ID is unchanged, so preferences stay in place. These builds are ad-hoc signed and not notarized: macOS may require Open Anyway and renewed Bluetooth approval. There is no embedded automatic updater.
 - Official changes can be reviewed and merged into this fork before making a new personal release. Updates are not merged automatically.
 
-For Homebrew-managed Mac updates, this repository also provides a personal cask:
+For Homebrew-managed Mac updates, the shared [personal tap](https://github.com/gbettineschi/homebrew-tap) provides a cask:
 
 ```sh
-brew tap gbettineschi/tetherbug https://github.com/gbettineschi/Tetherbug
-brew install --cask gbettineschi/tetherbug/tetherbug-personal
+brew tap gbettineschi/tap
+brew install --cask gbettineschi/tap/tetherbug-personal
 # Later:
 brew update
-brew upgrade --cask gbettineschi/tetherbug/tetherbug-personal
+brew upgrade --cask gbettineschi/tap/tetherbug-personal
 ```
 
 When moving from a copy at another location, turn off **Launch at login** in that copy and quit it first. Install and open the Homebrew copy, then enable **Launch at login** there. This moves the login helper to the new app location without deleting preferences. These commands are not needed for Android/Obtainium.
 
-The same tap also carries [Agent Handler](https://github.com/gbettineschi/agent-handler): `brew install --cask gbettineschi/tetherbug/agent-handler`.
+The same tap also carries [Agent Handler](https://github.com/gbettineschi/agent-handler): `brew install --cask gbettineschi/tap/agent-handler`.
 
 See [release and signing instructions](docs/personal-releases.md), [Mac setup](docs/macos.md), and the [BLE protocol](docs/protocol.md).
 
