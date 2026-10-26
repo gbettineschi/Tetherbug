@@ -40,7 +40,7 @@ The one automatic publisher owns release creation. The local `--publish` command
 
 The Android key, password and alias are encrypted secrets in the **android-release** Actions environment. That environment permits version tags and `main` manual verification, without pull-request access. The key is restored to a private temporary file on a disposable runner and removed afterward. This is a public repository; secret values are not public. A person able to alter trusted release workflows could misuse signing access, so keep repository write access controlled.
 
-For a non-publishing CI check, run **Release personal apps** manually on `main`. It builds and verifies the packages, saves verification artifacts for one day, and creates no release or tap update.
+For a non-publishing CI check, run **Release personal apps** manually on `main`. It builds and verifies both packages without uploading installers or creating a release or tap update. Routine CI also tests/builds without keeping installer downloads. Tagged releases publish installers directly to GitHub Releases, with no duplicate Actions artifact.
 
 Local build-only packaging is still available with `python3 scripts/release.py`. It reads `~/.local/share/tetherbug/android-signing/signing.json`, or `TETHER_SIGNING_CONFIG`, containing `keystore` (path), `alias`, and `password`. Relative key paths are resolved next to that JSON. Use Command Line Tools, JDK21 and Android SDK37; set `JAVA_HOME` and `ANDROID_HOME` as needed. Keep the retained key and config private and backed up. No password is printed or passed as a command-line argument. Builds do not install apps or change device settings.
 
