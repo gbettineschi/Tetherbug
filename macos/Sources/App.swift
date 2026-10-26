@@ -30,7 +30,20 @@ struct PathShape: Shape {
 /// Streams the agent's state; nil while the agent isn't running.
 final class AgentModel: ObservableObject {
     @Published var state: AgentState?
-    @Published var onNoWifi = Settings.onNoWifi { didSet { Settings.onNoWifi = onNoWifi } }
+    @Published var onNoWifi: Bool {
+        didSet {
+            guard !updatingFromAgent else { return }
+            defaults.set(onNoWifi, forKey: "onNoWifi")
+            send(onNoWifi ? "automatic on" : "automatic off")
+        }
+    }
+    private let defaults: UserDefaults
+    private var updatingFromAgent = false
+    private var agentStopping = false
+    var isEnding: Bool { agentStopping }
+    private let launchAgent: () throws -> Process
+    private let request: (String) -> Bool
+    private let observation = AgentObservation()
     @Published var disconnectWait = Settings.disconnectWait { didSet { Settings.disconnectWait = disconnectWait } }
     @Published var debugNotifications = Settings.debugNotifications {
         didSet {
@@ -50,19 +63,42 @@ final class AgentModel: ObservableObject {
         }
     }
     @Published var loginItem = SMAppService.agent(plistName: "ie.xav.tetherbug.agent.plist").status
+    @Published var loginError: String?
 
     private let agent = SMAppService.agent(plistName: "ie.xav.tetherbug.agent.plist")
 
-    init() {
+    init(defaults: UserDefaults = Settings.defaults,
+         watch: @escaping (@escaping (AgentState) -> Bool) -> Bool = { SocketClient.request("watch", onState: $0) },
+         launchAgent: @escaping () throws -> Process = {
+             let process = Process()
+             process.executableURL = Bundle.main.executableURL
+             process.arguments = ["agent"]
+             try process.run()
+             return process
+         },
+         request: @escaping (String) -> Bool = { command in
+             var acknowledged = false
+             let reached = SocketClient.request(command) { state in
+                 acknowledged = command != "quit" || state.stopping == true
+                 return false
+             }
+             return reached && acknowledged
+         }) {
+        self.defaults = defaults
+        self.launchAgent = launchAgent
+        self.request = request
+        onNoWifi = defaults.object(forKey: "onNoWifi") as? Bool ?? true
+        let observation = self.observation
         Thread.detachNewThread { [weak self] in
-            while self != nil {
+            while self != nil && observation.active {
                 // `watch` streams until the agent goes away; then retry, so the window follows restarts.
-                let connected = SocketClient.request("watch") { state in
-                    DispatchQueue.main.async { self?.state = state }
-                    return true
+                let connected = watch { state in
+                    DispatchQueue.main.async { self?.receive(state) }
+                    return observation.active
                 }
                 if !connected {
                     DispatchQueue.main.async {
+                        guard self?.agentStopping != true else { return }
                         self?.state = nil
                         self?.startSessionAgent()
                     }
@@ -72,34 +108,76 @@ final class AgentModel: ObservableObject {
         }
     }
 
+    private func receive(_ state: AgentState) {
+        if state.stopping == true {
+            agentStopping = true
+            NSApp.terminate(nil)
+            return
+        }
+        self.state = state
+        if let automatic = state.automatic, automatic != onNoWifi {
+            updatingFromAgent = true
+            onNoWifi = automatic
+            updatingFromAgent = false
+        }
+    }
+
     /// The hotspot password, fetched on demand from the agent (it isn't in the status stream).
     @Published var password: String?
 
-    func fetchPassword() {
+    func fetchPassword(completion: @escaping (String?) -> Void = { _ in }) {
         DispatchQueue.global().async {
+            var value: String?
             SocketClient.request("password") { state in
-                DispatchQueue.main.async { self.password = state.password }
+                value = state.password
                 return false
+            }
+            DispatchQueue.main.async {
+                self.password = value
+                completion(value)
             }
         }
     }
 
     func send(_ command: String) {
-        DispatchQueue.global().async { SocketClient.request(command) { _ in false } }
+        DispatchQueue.global().async { [request] in _ = request(command) }
     }
 
-    /// An agent the window runs while it's open, when nothing else does (the login item is off and no
-    /// launchd job or script started one).
+    /// Window close ends observation only; the menu-bar helper is intentionally independent.
+    func closeSettings() {
+        agentStopping = true
+        observation.stop()
+    }
+
+    func quit(completion: @escaping () -> Void) {
+        guard !agentStopping else { completion(); return }
+        closeSettings() // prevent the watcher from treating intentional shutdown as a crash
+        let child = sessionAgent
+        DispatchQueue.global().async { [request] in
+            let acknowledged = request("quit")
+            if !acknowledged, child?.isRunning == true {
+                child?.terminate()
+                child?.waitUntilExit()
+            }
+            DispatchQueue.main.async {
+                if !acknowledged {
+                    // Also handles an older helper that does not understand the socket Quit command.
+                    for app in NSRunningApplication.runningApplications(withBundleIdentifier: "ie.xav.tetherbug")
+                        where app.processIdentifier != getpid() { app.terminate() }
+                }
+                completion()
+            }
+        }
+    }
+
+    /// A manually launched helper. Registration alone does not mean launchd currently has a running
+    /// process; the agent's lifetime lock arbitrates a race with a launchd start.
     private var sessionAgent: Process?
 
     private func startSessionAgent() {
-        guard loginItem != .enabled, sessionAgent?.isRunning != true else { return }
-        let process = Process()
-        process.executableURL = Bundle.main.executableURL
-        process.arguments = ["agent"]
+        guard !agentStopping, sessionAgent?.isRunning != true else { return }
         do {
-            try process.run()
-            sessionAgent = process
+            sessionAgent = try launchAgent()
         } catch {
             log("couldn't start the agent: \(error.localizedDescription)")
         }
@@ -113,6 +191,7 @@ final class AgentModel: ObservableObject {
     }
 
     func setLoginItem(_ on: Bool) {
+        loginError = nil
         do {
             if on {
                 stopSessionAgent()
@@ -121,12 +200,20 @@ final class AgentModel: ObservableObject {
                 try agent.unregister()
             }
         } catch {
+            loginError = error.localizedDescription
             log("login item: \(error.localizedDescription)")
         }
         loginItem = agent.status
         // macOS asks the user to allow new background items in System Settings first.
         if loginItem == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
     }
+}
+
+private final class AgentObservation {
+    private let lock = NSLock()
+    private var stopped = false
+    var active: Bool { lock.lock(); defer { lock.unlock() }; return !stopped }
+    func stop() { lock.lock(); stopped = true; lock.unlock() }
 }
 
 enum Links {
@@ -141,364 +228,257 @@ enum Links {
 
 struct ContentView: View {
     @ObservedObject var model: AgentModel
-    @Environment(\.colorScheme) private var scheme
-    @StateObject private var keyboard = KeyboardFocus()
+
+    private var state: AgentState? { model.state }
+    private var phone: PhoneStatus? { state?.connected == true ? state?.status : nil }
+    private var canSwitch: Bool {
+        phone?.controllable == true && phone?.hotspot != .starting && state?.requestPending != true
+    }
+    private var connection: String {
+        guard let state else { return "Starting…" }
+        if state.connected { return state.phone ?? "Phone connected" }
+        if state.bluetooth == "on" { return "Looking for your phone…" }
+        if state.bluetooth == "unauthorized" { return "Bluetooth access required" }
+        return "Bluetooth is \(state.bluetooth)"
+    }
 
     var body: some View {
-        let palette = Palette.current(scheme)
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Tetherbug").font(.custom("Palatino", size: 34).weight(.semibold))
-                    Text("Instant Hotspot for your Mac").opacity(0.75)
+        Form {
+            Section("Phone") {
+                LabeledContent("Connection") {
+                    Text(connection).foregroundStyle(phone == nil ? .secondary : .primary)
+                        .multilineTextAlignment(.trailing).textSelection(.enabled)
                 }
-                Spacer()
-                PathShape.buddy.fill(palette.foreground, style: FillStyle(eoFill: true)).frame(width: 96, height: 60)
-                    .accessibilityHidden(true)
-                WindowControls(palette: palette)
-            }
-            // The header (and the band above it) is the window's drag handle.
-            .padding(.top, 22)
-            .background(WindowDragArea().padding(.horizontal, -18))
-
-            Card(palette: palette, label: "Status") { status(palette) }
-
-            Card(palette: palette, title: "Settings") {
-                Toggle("Turn on hotspot when Wi-Fi is disconnected", isOn: $model.onNoWifi)
-                if model.onNoWifi {
-                    SecondsField(title: "After disconnected for", seconds: $model.disconnectWait, range: 0...600, palette: palette)
-                        // Indented: it qualifies the switch above.
-                        .padding(.leading, 16)
-                }
-                if let job = model.state?.managedBy {
-                    // Something else (nix-darwin, say) runs the agent; the login item would only add a
-                    // second copy that steps aside, so show who's in charge instead of the switch.
-                    HStack {
-                        Text("Run in the background")
-                        Spacer()
-                        Text(job.hasPrefix("org.nixos.") ? "Managed by Nix" : "Managed by launchd").opacity(0.7)
+                HStack {
+                    Toggle("Hotspot", isOn: Binding(
+                        get: { phone?.hotspot == .on },
+                        set: { _ in model.send("toggle") }
+                    ))
+                    .disabled(!canSwitch)
+                    if state?.requestPending == true || phone?.hotspot == .starting {
+                        ProgressView().controlSize(.small)
                     }
-                    Text("Your configuration starts the agent at login (\(job)).").font(.caption).opacity(0.7)
+                }
+                if let error = state?.requestError {
+                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                }
+                if let phone, !phone.controllable {
+                    Text("Shizuku is not ready on your phone. Open Tetherbug there to check access.")
+                        .foregroundStyle(.secondary).font(.callout)
+                } else if state?.connected == true && phone == nil {
+                    Text("Reading phone status…").foregroundStyle(.secondary)
+                } else if state?.bluetooth == "unauthorized" {
+                    Link("Allow Bluetooth access in System Settings", destination: Links.bluetoothSettings)
+                } else if state?.connected != true {
+                    Text("Keep Bluetooth on and Tetherbug running on your phone.")
+                        .foregroundStyle(.secondary).font(.callout)
+                }
+                LabeledContent("Network") {
+                    Text(phone?.ssid.isEmpty == false ? phone!.ssid : "—")
+                        .textSelection(.enabled).multilineTextAlignment(.trailing)
+                }
+                PasswordRow(model: model, available: phone != nil)
+                if let phone {
+                    LabeledContent("Phone status", value: "\(phone.battery)% battery · Signal \(phone.signal)/4")
+                        .foregroundStyle(.secondary).font(.callout)
+                }
+            }
+
+            Section("Automatic activation") {
+                Toggle("Turn on hotspot when Wi-Fi is unavailable", isOn: $model.onNoWifi)
+                if model.onNoWifi {
+                    LabeledContent("Wait before turning on") {
+                        HStack(spacing: 6) {
+                            TextField("Seconds", value: Binding(
+                                get: { model.disconnectWait },
+                                set: { model.disconnectWait = min(600, max(0, $0)) }
+                            ), format: .number.grouping(.never))
+                            .labelsHidden().accessibilityLabel("Wait before turning on, seconds")
+                            .frame(width: 55).multilineTextAlignment(.trailing)
+                            .textFieldStyle(.roundedBorder)
+                            Text("seconds").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if let expiry = state?.automaticPausedUntil {
+                    Text("Paused until \(expiry.formatted(date: .omitted, time: .shortened)).")
+                        .foregroundStyle(.secondary).font(.callout)
+                }
+            }
+
+            Section("General") {
+                if let job = state?.managedBy {
+                    LabeledContent("Launch at login", value: job.hasPrefix("org.nixos.") ? "Managed by Nix" : "Managed by launchd")
                 } else {
-                    Toggle("Run in the background", isOn: Binding(
-                        get: { model.loginItem == .enabled },
+                    Toggle("Launch at login", isOn: Binding(
+                        get: { model.loginItem == .enabled || model.loginItem == .requiresApproval },
                         set: { model.setLoginItem($0) }
                     ))
-                    Text("Starts at login and keeps working when this window is closed.").font(.caption).opacity(0.7)
                 }
                 if model.loginItem == .requiresApproval {
-                    Text("Allow Tetherbug under System Settings → General → Login Items.").font(.caption).opacity(0.7)
+                    Button("Allow Tetherbug in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                 }
+                if let error = model.loginError { Text(error).foregroundStyle(.red).font(.callout) }
+                Text("Closing this window keeps Tetherbug in the menu bar. Choose Quit Tetherbug to stop it.")
+                    .foregroundStyle(.secondary).font(.callout)
+            }
+
+            Section("Diagnostics") {
                 Toggle("Debug notifications", isOn: $model.debugNotifications)
-                Text("Posts a notification for everything the background agent does.").font(.caption).opacity(0.7)
                 if model.debugNotifications, !model.notificationsAllowed {
-                    Text("Notifications are off for Tetherbug.").font(.caption).opacity(0.7)
-                    SiteLink("Open Notifications settings →", url: Links.notificationSettings, palette: palette)
+                    Link("Allow notifications in System Settings", destination: Links.notificationSettings)
                 }
             }
 
-            Card(palette: palette, title: "Using SketchyBar?") {
-                Text("Show your phone's hotspot state and battery in the bar, and turn the hotspot on with a click.")
-                    .opacity(0.75)
-                    .fixedSize(horizontal: false, vertical: true)
-                SiteLink("Add Tetherbug to SketchyBar →", url: Links.sketchybar, palette: palette)
-            }
-
-            HStack(spacing: 16) {
-                SiteLink(title: "Setup guide", url: Links.setup, palette: palette) { Image(systemName: "book.closed") }
-                SiteLink(title: "Phone app", url: Links.releases, palette: palette) { Image(systemName: "smartphone") }
-                SiteLink(title: "GitHub", url: Links.repo, palette: palette) {
-                    PathShape.github.fill(style: FillStyle(eoFill: true)).frame(width: 13, height: 13)
-                }
-                Spacer()
-                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
-                    .opacity(0.6)
-            }
-            .font(.callout)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Links")
-        }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 26)
-        .frame(width: 500)
-        .foregroundStyle(palette.foreground)
-        .tint(palette.alt)
-        .toggleStyle(TrailingSwitchStyle(palette: palette))
-        .background(WindowSurface(palette: palette))
-        .clipShape(RoundedRectangle(cornerRadius: WindowSurface.radius, style: .continuous))
-        .keyboardNavigation(keyboard)
-    }
-
-    @ViewBuilder private func status(_ palette: Palette) -> some View {
-        let state = model.state
-        let phone = state?.connected == true ? state?.status : nil
-        if let state {
-            if state.connected {
-                Label("\(state.phone ?? "Phone") is connected", systemImage: "iphone.radiowaves.left.and.right").font(.headline)
-            } else if state.bluetooth != "on" {
-                Label("Bluetooth is \(state.bluetooth)", systemImage: "exclamationmark.triangle").font(.headline)
-            } else {
-                Label("Looking for your phone…", systemImage: "antenna.radiowaves.left.and.right").font(.headline)
-            }
-        } else {
-            Label("The background agent isn't running", systemImage: "moon.zzz").font(.headline)
-        }
-
-        // Unknown (knob centred, disabled) until the phone reports a state it can change; starting
-        // is in-between too. Failed counts as off so it can be retried.
-        HotspotSwitch(
-            isOn: phone.flatMap { $0.hotspot == .on ? true : ($0.hotspot == .off || $0.hotspot == .failed) ? false : nil },
-            enabled: phone?.controllable == true && phone?.hotspot != .starting,
-            palette: palette
-        ) { model.send($0 ? "enable" : "disable") }
-
-        if let phone {
-            if phone.hotspot == .failed {
-                Text("The phone couldn't switch its hotspot. Try again, or check Tetherbug on the phone.").font(.caption).opacity(0.7)
-            }
-            if !phone.controllable {
-                Text("Shizuku isn't ready on your phone, so it can't switch the hotspot. Open Tetherbug there.")
-                    .font(.caption).opacity(0.7)
+            Section {
+                HStack {
+                    Link("Help", destination: Links.setup)
+                    Link("Phone app", destination: Links.releases)
+                    Link("GitHub", destination: Links.repo)
+                    Spacer()
+                    Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                        .foregroundStyle(.secondary)
+                }.font(.callout)
             }
         }
-        // The rows stay put while the phone connects, as placeholders, so the card doesn't jump.
-        HStack(spacing: 10) {
-            Text("Network")
-            Spacer()
-            Text(phone?.ssid ?? "My Hotspot").font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                .redacted(reason: phone == nil ? .placeholder : [])
-            // Lines the name up with the password, which has its buttons here.
-            Color.clear.frame(width: PasswordRow.actionsWidth, height: 1)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Network")
-        .accessibilityValue(phone?.ssid ?? "unknown")
-        .accessibilityAddTraits(.isStaticText)
-        PasswordRow(model: model, palette: palette, available: phone != nil)
-        // One line: the phone's cellular signal (which limits the hotspot's speed), or what to do.
-        Group {
-            if let phone {
-                Text("Cell signal \(phone.signal)/4")
-            } else if state == nil {
-                Text("Turn on “Run in the background” below to start it.")
-            } else if state?.bluetooth == "unauthorized" {
-                HStack(spacing: 4) {
-                    Text("Allow Tetherbug under Privacy & Security → Bluetooth.")
-                    SiteLink("Open settings →", url: Links.bluetoothSettings, palette: palette)
-                }
-            } else if state?.bluetooth == "on" {
-                HStack(spacing: 4) {
-                    Text("Make sure Tetherbug is running on your phone.")
-                    SiteLink("How to pair →", url: Links.pairing, palette: palette)
-                }
-            } else {
-                Text("Turn Bluetooth on to reach your phone.")
-            }
-        }
-        .font(.caption)
-        .opacity(0.7)
-        .lineLimit(1)
-    }
-}
-
-/// The hotspot password, hidden until asked for; Copy puts it on the clipboard.
-/// A label as wide as its widest alternative, so switching between them doesn't move its neighbours.
-struct SteadyLabel: View {
-    let text: String
-    let alternatives: [String]
-
-    init(_ text: String, alternatives: [String]) {
-        self.text = text
-        self.alternatives = alternatives
-    }
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            ForEach(alternatives, id: \.self) { Text($0).hidden() }
-            Text(text)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+        .formStyle(.grouped)
+        .toggleStyle(.switch)
+        .frame(minWidth: 500, minHeight: 560)
     }
 }
 
 struct PasswordRow: View {
     @ObservedObject var model: AgentModel
-    let palette: Palette
-    /// False until the phone is connected: the row shows as a placeholder.
-    var available = true
+    var available: Bool
     @State private var shown = false
-    /// Bumped on every copy; the label says "Copied!" until 5s after the latest one.
-    @State private var copies = 0
     @State private var copied = false
-    /// Fits "Hide" and "Copied!", so the password doesn't shift as the labels change.
-    static let actionsWidth: CGFloat = 110
-
-    private func toggleShown() {
-        if !shown { model.fetchPassword() }
-        shown.toggle()
-    }
-
-    private func copy() {
-        model.fetchPassword()
-        // Copy once the agent has replied.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            guard let password = model.password else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(password, forType: .string)
-            copies += 1
-            copied = true
-            let copy = copies
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if copies == copy { copied = false } }
-        }
-    }
+    @State private var copies = 0
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack {
             Text("Password")
             Spacer()
-            Group {
-                // A word rather than dots, so nothing hints at the password's length.
-                if shown {
-                    Text(model.password ?? "…").font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                } else {
-                    Text("Hidden").font(.system(.body, design: .monospaced)).italic().opacity(0.6)
+            HStack(spacing: 10) {
+                Text(shown ? (model.password ?? "Loading…") : "Hidden")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(shown ? .primary : .secondary)
+                    .textSelection(.enabled)
+                Button(shown ? "Hide" : "Show") {
+                    if !shown { model.fetchPassword() }
+                    shown.toggle()
+                }
+                Button(copied ? "Copied" : "Copy") {
+                    model.fetchPassword { value in
+                        guard let value else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(value, forType: .string)
+                        copies += 1
+                        copied = true
+                        let current = copies
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            if current == copies { copied = false }
+                        }
+                    }
                 }
             }
-            .redacted(reason: available ? [] : .placeholder)
-                .accessibilityLabel(shown ? (model.password ?? "loading") : "hidden")
-            HStack(spacing: 10) {
-                Button(action: toggleShown) { SteadyLabel(shown ? "Hide" : "Show", alternatives: ["Show", "Hide"]) }
-                    .buttonStyle(TextButtonStyle(palette: palette))
-                    .keyboardFocusable(palette, radius: 4, action: toggleShown)
-                Button(action: copy) { SteadyLabel(copied ? "Copied!" : "Copy", alternatives: ["Copy", "Copied!"]) }
-                    .buttonStyle(TextButtonStyle(palette: palette))
-                    .keyboardFocusable(palette, radius: 4, action: copy)
-            }
-            .frame(width: Self.actionsWidth, alignment: .leading)
-            .disabled(!available)
-            .opacity(available ? 1 : 0.4)
+            .buttonStyle(.bordered).controlSize(.small).disabled(!available)
         }
-        .onChange(of: available) { if !available { shown = false } }
+        .accessibilityElement(children: .contain)
+        .onChange(of: available) { if !available { shown = false; copied = false } }
     }
 }
 
-/// A borderless window that can still take keyboard focus and close from ⌘W / the close control.
-final class AppWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-    override func performClose(_ sender: Any?) { close() }
-
-    // macOS won't minimise a borderless window, so it takes an invisible title bar while minimised.
-    override func miniaturize(_ sender: Any?) {
-        styleMask.formUnion([.titled, .fullSizeContentView])
-        titlebarAppearsTransparent = true
-        titleVisibility = .hidden
-        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            standardWindowButton(button)?.isHidden = true
-        }
-        super.miniaturize(sender)
-    }
-
-    func dropTitleBarOnRestore() {
-        NotificationCenter.default.addObserver(forName: NSWindow.didDeminiaturizeNotification, object: self, queue: .main) { [weak self] _ in
-            self?.styleMask.subtract([.titled, .fullSizeContentView])
-        }
-    }
-
-    // VoiceOver gets real window buttons in place of the drawn bubbles, which it doesn't see.
-    private lazy var minimizeButton = WindowButton("Minimize", subrole: .minimizeButton, window: self) { [weak self] in self?.miniaturize(nil) }
-    private lazy var closeButton = WindowButton("Close", subrole: .closeButton, window: self) { [weak self] in self?.close() }
-    override func accessibilityChildren() -> [Any]? { [minimizeButton, closeButton] + (super.accessibilityChildren() ?? []) }
-    override func accessibilityMinimizeButton() -> Any? { minimizeButton }
-    override func accessibilityCloseButton() -> Any? { closeButton }
-}
-
-/// A window button for VoiceOver, placed over its drawn bubble (WindowControl reports the frame).
-final class WindowButton: NSAccessibilityElement {
-    /// SwiftUI frames of the drawn bubbles by label, in window coordinates with a top-left origin.
-    static var frames: [String: CGRect] = [:]
-    private let label: String
-    private weak var window: NSWindow?
-    private let press: () -> Void
-
-    init(_ label: String, subrole: NSAccessibility.Subrole, window: NSWindow, press: @escaping () -> Void) {
-        self.label = label
-        self.window = window
-        self.press = press
-        super.init()
-        setAccessibilityRole(.button)
-        setAccessibilitySubrole(subrole)
-        setAccessibilityLabel(label)
-        setAccessibilityParent(window)
-    }
-
-    override func accessibilityFrame() -> NSRect {
-        guard let window, let content = window.contentView, let f = Self.frames[label] else { return .zero }
-        return window.convertToScreen(NSRect(x: f.minX, y: content.bounds.height - f.maxY, width: f.width, height: f.height))
-    }
-
-    override func accessibilityPerformPress() -> Bool {
-        press()
-        return true
-    }
-}
-
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private let model = AgentModel()
     private var bluetooth: CBCentralManager?
+    private var closingSettings = false
 
-    /// macOS never shows the windowless agent the Bluetooth prompt, so ask from the window: the agent
-    /// is the same app and shares the grant. Only an active app may prompt.
     func applicationDidBecomeActive(_ notification: Notification) {
-        // Coming back from System Settings, maybe with notifications switched on.
+        window?.deminiaturize(nil)
         model.checkNotifications()
-        if bluetooth == nil, CBManager.authorization == .notDetermined { bluetooth = CBCentralManager(delegate: nil, queue: nil) }
+        if bluetooth == nil, CBManager.authorization == .notDetermined {
+            bluetooth = CBCentralManager(delegate: nil, queue: nil)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Content fills the whole window; the themed view draws its own close/minimise controls.
-        // Borderless and transparent: the content draws the rounded, bevelled window body itself, and
-        // the system shadow follows that shape.
-        let window = AppWindow(contentRect: .zero, styleMask: [.borderless, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.dropTitleBarOnRestore()
-        self.window = window
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 690),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                          backing: .buffered, defer: false)
         window.title = "Tetherbug"
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = true
-        window.isMovableByWindowBackground = false
+        window.delegate = self
+        window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: 500, height: 560)
+        window.contentView = NSHostingView(rootView: ContentView(model: model))
         NSApp.mainMenu = mainMenu()
-        let hosting = NSHostingView(rootView: ContentView(model: model))
-        hosting.safeAreaRegions = []
-        window.contentView = hosting
-        window.setContentSize(window.contentView!.fittingSize)
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        // The shadow is computed from the window's alpha, so redo it once the rounded body is drawn.
-        DispatchQueue.main.async { self.window.invalidateShadow() }
+        showSettings()
     }
 
-    /// Keeps ⌘W, ⌘M and ⌘Q working without the standard window buttons.
+    @objc private func showSettings() {
+        closingSettings = false
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func showHelp() { NSWorkspace.shared.open(Links.setup) }
+
     private func mainMenu() -> NSMenu {
         let menu = NSMenu()
-        let appItem = NSMenuItem()
-        appItem.submenu = NSMenu()
-        appItem.submenu!.addItem(withTitle: "Quit Tetherbug", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        let windowItem = NSMenuItem()
-        windowItem.submenu = NSMenu(title: "Window")
-        windowItem.submenu!.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowItem.submenu!.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
-        menu.addItem(appItem)
-        menu.addItem(windowItem)
+        func section(_ title: String) -> NSMenu {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: title)
+            item.submenu = submenu
+            menu.addItem(item)
+            return submenu
+        }
+        let app = section("Tetherbug")
+        app.addItem(withTitle: "About Tetherbug", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        let settings = app.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        app.addItem(.separator())
+        app.addItem(withTitle: "Hide Tetherbug", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = app.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        app.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Quit Tetherbug", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let edit = section("Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let windows = section("Window")
+        windows.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        NSApp.windowsMenu = windows
+        let help = section("Help")
+        let guide = help.addItem(withTitle: "Tetherbug Help", action: #selector(showHelp), keyEquivalent: "?")
+        guide.target = self
+        NSApp.helpMenu = help
         return menu
     }
 
-    // Closing the window quits the app; the background agent keeps running on its own.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return false
+    }
+    func windowWillClose(_ notification: Notification) { closingSettings = true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ notification: Notification) { model.stopSessionAgent() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if closingSettings || model.isEnding { return .terminateNow }
+        model.quit { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
+    func applicationWillTerminate(_ notification: Notification) { model.closeSettings() }
 }
 
 func runApp() -> Never {

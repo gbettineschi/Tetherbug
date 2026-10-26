@@ -1,22 +1,9 @@
 package ie.xav.tetherbug
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothGattServer
-import android.bluetooth.BluetoothGattServerCallback
-import android.bluetooth.BluetoothGattService
-import android.bluetooth.BluetoothManager
-import android.bluetooth.le.AdvertisingSet
-import android.bluetooth.le.AdvertisingSetCallback
-import android.bluetooth.le.AdvertisingSetParameters
-import android.bluetooth.le.AdvertiseData
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -27,31 +14,23 @@ import android.os.BatteryManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.ParcelUuid
 import android.telephony.TelephonyManager
 import android.util.Log
-import java.util.UUID
 import java.util.concurrent.Executors
+import rikka.shizuku.Shizuku
 
 /**
  * Foreground service exposing the tetherbug BLE GATT service (see README "BLE protocol").
- * Both characteristics require an encrypted link, so only a bonded Mac can read status or send
+ * All characteristics require an encrypted link, so only a bonded Mac can read status or send
  * commands; the advertisement carries nothing but the service UUID.
  */
-@SuppressLint("MissingPermission") // MainActivity grants BLUETOOTH_CONNECT/ADVERTISE before starting us.
 class TetherService : Service() {
     companion object {
         private const val TAG = "tetherbug"
-        val SERVICE: UUID = UUID.fromString("1581bac4-33fe-43a8-b97f-5dd7a01f48c9")
-        val STATUS: UUID = UUID.fromString("90766fca-8a24-43ae-8501-3dcef06a8479")
-        val COMMAND: UUID = UUID.fromString("e036426f-6317-487d-8777-e6f6d91f8a4d")
-        val CREDENTIALS: UUID = UUID.fromString("355534b0-7222-480b-aa18-02a6c30feea2")
-        private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         private const val PROTOCOL_VERSION: Byte = 3
         private const val FLAG_CONTROLLABLE = 1
         private const val CMD_ENABLE: Byte = 0x01
-        private const val CMD_DISABLE: Byte = 0x02
 
         // Hidden WifiManager AP-state broadcast and its states.
         private const val WIFI_AP_STATE_CHANGED = "android.net.wifi.WIFI_AP_STATE_CHANGED"
@@ -68,10 +47,7 @@ class TetherService : Service() {
     }
 
     private val worker = Executors.newSingleThreadExecutor()
-    private val subscribers = mutableSetOf<BluetoothDevice>()
-    private lateinit var gatt: BluetoothGattServer
-    private lateinit var statusChar: BluetoothGattCharacteristic
-    private val connected = mutableSetOf<BluetoothDevice>()
+    private lateinit var transport: BluetoothTransport
     private val handler = Handler(Looper.getMainLooper())
     private var hotspot = HOTSPOT_OFF
         set(value) {
@@ -82,6 +58,19 @@ class TetherService : Service() {
     // The running hotspot's frequency in MHz (0 unknown), from Shizuku once it's ready.
     @Volatile private var frequency = 0
     private var stopWatchingFrequency: (() -> Unit)? = null
+    private var destroyed = false
+    private val shizukuReceived = Shizuku.OnBinderReceivedListener { shizukuChanged() }
+    private val shizukuDead = Shizuku.OnBinderDeadListener { shizukuChanged() }
+    private val shizukuPermission = Shizuku.OnRequestPermissionResultListener { _, _ -> shizukuChanged() }
+
+    /** Availability can change without an AP or battery event. Publish it over the existing link. */
+    private fun shizukuChanged() {
+        handler.post {
+            if (destroyed) return@post
+            watchFrequency()
+            notifySubscribers()
+        }
+    }
 
     private val receiver =
         object : BroadcastReceiver() {
@@ -115,46 +104,18 @@ class TetherService : Service() {
         startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         // The AP-state broadcast isn't sticky, so read the current state once.
         hotspot = hotspotState(Privileged.apState(getSystemService(WifiManager::class.java)))
-        registerReceiver(receiver, IntentFilter(WIFI_AP_STATE_CHANGED).apply { addAction(Intent.ACTION_BATTERY_CHANGED) })
-
-        val manager = getSystemService(BluetoothManager::class.java)
-        gatt = manager.openGattServer(this, callback)
-        statusChar =
-            BluetoothGattCharacteristic(
-                STATUS,
-                BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
-                BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED,
-            ).apply {
-                addDescriptor(
-                    BluetoothGattDescriptor(
-                        CCCD,
-                        BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED or BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED,
-                    ),
-                )
-            }
-        val commandChar =
-            BluetoothGattCharacteristic(
-                COMMAND,
-                BluetoothGattCharacteristic.PROPERTY_WRITE,
-                BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED,
-            )
-        // The hotspot password, so the Mac can show it; like everything else, only over a bonded, encrypted link.
-        val credentialsChar =
-            BluetoothGattCharacteristic(
-                CREDENTIALS,
-                BluetoothGattCharacteristic.PROPERTY_READ,
-                BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED,
-            )
-        gatt.addService(
-            BluetoothGattService(SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY).apply {
-                addCharacteristic(statusChar)
-                addCharacteristic(commandChar)
-                addCharacteristic(credentialsChar)
-            },
+        transport = BluetoothTransport(
+            this, worker, ::status,
+            credentials = { runCatching { Privileged.passphrase() }.getOrDefault("").toByteArray() },
+            command = ::command,
+            state = { advertising, count -> TetherState.update { it.copy(advertising = advertising, connectedMacs = count) } },
         )
-
+        registerReceiver(receiver, IntentFilter(WIFI_AP_STATE_CHANGED).apply { addAction(Intent.ACTION_BATTERY_CHANGED) })
         TetherState.update { it.copy(running = true) }
-        startAdvertising()
+        transport.start()
+        Shizuku.addBinderDeadListener(shizukuDead)
+        Shizuku.addRequestPermissionResultListener(shizukuPermission)
+        Shizuku.addBinderReceivedListenerSticky(shizukuReceived)
         watchFrequency()
         pollHotspot()
     }
@@ -186,44 +147,17 @@ class TetherService : Service() {
             }.onFailure { Log.w(TAG, "can't watch the hotspot's frequency", it) }.getOrDefault {}
     }
 
-    private fun startAdvertising() {
-        // ponytail: null while Bluetooth is off; advertising starts with the next service start.
-        val advertiser = getSystemService(BluetoothManager::class.java).adapter.bluetoothLeAdvertiser
-            ?: return Log.w(TAG, "Bluetooth is off; not advertising").let {}
-        TetherState.update { it.copy(advertising = false) }
-        advertiser.startAdvertisingSet(
-            AdvertisingSetParameters.Builder()
-                .setLegacyMode(true)
-                .setConnectable(true)
-                .setScannable(true)
-                .setInterval(AdvertisingSetParameters.INTERVAL_HIGH)
-                .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_MEDIUM)
-                .build(),
-            AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE)).build(),
-            null,
-            null,
-            null,
-            advertiseCallback,
-        )
-        // The stack can silently drop a request (seen right after a reinstall), so retry
-        // until it reports the set started.
-        handler.postDelayed({
-            if (!TetherState.snapshot.value.advertising) {
-                Log.w(TAG, "advertising didn't start; retrying")
-                advertiser.stopAdvertisingSet(advertiseCallback)
-                startAdvertising()
-            }
-        }, 5000)
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
 
     override fun onDestroy() {
+        destroyed = true
+        Shizuku.removeBinderDeadListener(shizukuDead)
+        Shizuku.removeRequestPermissionResultListener(shizukuPermission)
+        Shizuku.removeBinderReceivedListener(shizukuReceived)
         handler.removeCallbacksAndMessages(null)
         runCatching { stopWatchingFrequency?.invoke() }
-        getSystemService(BluetoothManager::class.java).adapter.bluetoothLeAdvertiser?.stopAdvertisingSet(advertiseCallback)
+        transport.close()
         TetherState.update { TetherState.Snapshot() }
-        gatt.close()
         unregisterReceiver(receiver)
         worker.shutdown()
         super.onDestroy()
@@ -238,18 +172,13 @@ class TetherService : Service() {
             ssid.toByteArray()
     }
 
-    private fun notifySubscribers() {
-        if (synchronized(subscribers) { subscribers.isEmpty() }) return
-        worker.execute {
-            val value = status()
-            synchronized(subscribers) { subscribers.toList() }.forEach { gatt.notifyCharacteristicChanged(it, statusChar, false, value) }
-        }
-    }
+    private fun notifySubscribers() = transport.notifySubscribers()
 
     private fun command(cmd: Byte) {
         if (!Privileged.isReady()) {
             Log.w(TAG, "command $cmd ignored: Shizuku not ready")
-            hotspot = HOTSPOT_FAILED
+            // Control being unavailable does not mean the hotspot itself failed.
+            hotspot = hotspotState(Privileged.apState(getSystemService(WifiManager::class.java)))
             notifySubscribers()
             return
         }
@@ -265,80 +194,6 @@ class TetherService : Service() {
             }
         }
     }
-
-    private val callback =
-        object : BluetoothGattServerCallback() {
-            override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-                if (newState != BluetoothGatt.STATE_CONNECTED) synchronized(subscribers) { subscribers.remove(device) }
-                val count =
-                    synchronized(connected) {
-                        if (newState == BluetoothGatt.STATE_CONNECTED) connected.add(device) else connected.remove(device)
-                        connected.size
-                    }
-                TetherState.update { it.copy(connectedMacs = count) }
-            }
-
-            override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic) {
-                worker.execute {
-                    val value =
-                        when (characteristic.uuid) {
-                            STATUS -> status()
-                            CREDENTIALS -> runCatching { Privileged.passphrase() }.getOrDefault("").toByteArray()
-                            else -> null
-                        }
-                    val ok = value != null && offset <= value.size
-                    gatt.sendResponse(
-                        device,
-                        requestId,
-                        if (ok) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE,
-                        offset,
-                        if (ok) value!!.copyOfRange(offset, value.size) else null,
-                    )
-                }
-            }
-
-            override fun onCharacteristicWriteRequest(
-                device: BluetoothDevice,
-                requestId: Int,
-                characteristic: BluetoothGattCharacteristic,
-                preparedWrite: Boolean,
-                responseNeeded: Boolean,
-                offset: Int,
-                value: ByteArray,
-            ) {
-                val ok = characteristic.uuid == COMMAND && value.size == 1 && value[0] in listOf(CMD_ENABLE, CMD_DISABLE)
-                if (responseNeeded) {
-                    gatt.sendResponse(device, requestId, if (ok) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE, 0, null)
-                }
-                if (ok) worker.execute { command(value[0]) }
-            }
-
-            override fun onDescriptorWriteRequest(
-                device: BluetoothDevice,
-                requestId: Int,
-                descriptor: BluetoothGattDescriptor,
-                preparedWrite: Boolean,
-                responseNeeded: Boolean,
-                offset: Int,
-                value: ByteArray,
-            ) {
-                synchronized(subscribers) {
-                    if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) subscribers.add(device) else subscribers.remove(device)
-                }
-                if (responseNeeded) gatt.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            }
-        }
-
-    private val advertiseCallback =
-        object : AdvertisingSetCallback() {
-            override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
-                if (status == ADVERTISE_SUCCESS) {
-                    TetherState.update { it.copy(advertising = true) }
-                } else {
-                    Log.e(TAG, "advertising failed: $status")
-                }
-            }
-        }
 
     private fun notification(): Notification {
         val channel = NotificationChannel("service", "Tetherbug", NotificationManager.IMPORTANCE_MIN)

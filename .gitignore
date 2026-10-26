@@ -6,3 +6,13 @@ android/build/
 android/local.properties
 assets/drafts/
 __pycache__/
+/build/
+/.worktrees/
+
+# Release credentials belong outside the repository.
+*.jks
+*.keystore
+*.p12
+*.p8
+.env
+signing.json

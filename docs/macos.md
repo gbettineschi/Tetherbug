@@ -7,8 +7,8 @@ a `tetherbug` command-line tool.
 ## 1. Set up the phone
 
 Install the Tetherbug Android app from the
-[releases page](https://github.com/xav-ie/Tetherbug/releases), then follow its setup checklist:
-Bluetooth and notification permissions, [Shizuku](https://shizuku.rikka.app) (hotspot control needs
+[releases page](https://github.com/gbettineschi/Tetherbug/releases), then follow its setup checklist:
+Bluetooth permissions (notifications are optional), [Shizuku](https://shizuku.rikka.app) (hotspot control needs
 system rights), and start the service.
 
 ## 2. Pair the phone with your Mac
@@ -30,7 +30,7 @@ prompt. Only a paired Mac can read the phone's status or turn its hotspot on.
 Try it without installing anything:
 
 ```sh
-nix run github:xav-ie/Tetherbug
+nix run github:gbettineschi/Tetherbug
 ```
 
 To install it for good with [nix-darwin](https://github.com/nix-darwin/nix-darwin), add the flake and
@@ -39,7 +39,7 @@ on your `PATH`, and runs the background agent at login through launchd:
 
 ```nix
 # flake.nix
-inputs.tetherbug.url = "github:xav-ie/Tetherbug";
+inputs.tetherbug.url = "github:gbettineschi/Tetherbug";
 
 # one of your darwinConfiguration's modules
 {
@@ -51,18 +51,14 @@ inputs.tetherbug.url = "github:xav-ie/Tetherbug";
 With the module you can leave **Run in the background** off: launchd already keeps the agent
 running. Open Tetherbug once from Applications so macOS asks for Bluetooth access.
 
-### With Homebrew
+### Updates
 
-```sh
-brew install xav-ie/tap/tetherbug
-```
-
-That installs **Tetherbug.app** in Applications and the `tetherbug` command.
+Use this fork’s release downloads to retain the patches. See [personal releases](personal-releases.md) for signing and update details. Do not use the original author’s Homebrew cask: it installs upstream builds.
 
 ### From the releases page
 
 Download `Tetherbug-v<version>.zip` from the
-[releases page](https://github.com/xav-ie/Tetherbug/releases), unzip it, and move **Tetherbug.app** to
+[releases page](https://github.com/gbettineschi/Tetherbug/releases), unzip it, and move **Tetherbug.app** to
 Applications.
 
 Tetherbug isn't notarized by Apple yet, so the first time you open a Homebrew or downloaded copy,
@@ -78,6 +74,23 @@ See [Development](development.md) to build the app yourself.
 Open Tetherbug and turn on **Run in the background**. macOS may ask you to allow it under
 **System Settings → General → Login Items**, and asks once for Bluetooth access. The window then shows
 your phone, its hotspot state and battery.
+
+### Menu-bar control
+
+The existing background agent also displays a native hotspot icon. No extra helper is needed.
+
+- **Click or right-click:** open the native menu. Use the **Mobile Hotspot** switch to toggle the hotspot, or change **Automatic mode** in the menu.
+- With **Automatic mode** on, turning the hotspot off pauses activation for **15 minutes**. The pause appears beside Automatic mode. Turning the hotspot on manually cancels it; no separate Resume button is needed.
+- The pause survives sleep and agent restart. After it expires, automatic activation still requires
+  enabled but disconnected Mac Wi-Fi and the configured disconnect wait. Connected Wi-Fi is left alone.
+- The icon follows the phone's reported state. While awaiting confirmation, or if the phone/Shizuku
+  is unavailable, clicking cannot issue another toggle. Errors appear in the menu and settings window.
+
+Keep **Run in the background** enabled to retain the menu when the settings window closes. Without
+it, the menu exists only while the window's session agent is running. Menu **Quit Tetherbug** exits
+the agent and an open settings window; it does not turn off the phone's hotspot or unregister the login item.
+
+This remains Tetherbug's Bluetooth/Shizuku integration. The native Personal Hotspot marker depends on the phone actually transmitting it (not verified on every firmware, and absent on the tested S23); the menu does not add Apple's off-state discovery to macOS Wi-Fi.
 
 ### Settings
 
@@ -104,7 +117,16 @@ Using SketchyBar? See [Tetherbug in SketchyBar](sketchybar.md).
 Needs the Xcode command line tools.
 
 ```sh
-git clone https://github.com/xav-ie/Tetherbug
+git clone https://github.com/gbettineschi/Tetherbug
 Tetherbug/macos/build.sh ~/Applications
 open ~/Applications/Tetherbug.app
 ```
+
+Run Mac policy, native-menu and settings-model tests with `bash macos/test.sh`. For a native menu
+preview using simulated phone states and an isolated preferences suite, run `bash macos/test.sh preview`.
+Neither command talks to a phone. These checks do not replace validation of Bluetooth/hotspot control
+on an actual Android device.
+
+If a Command Line Tools installation reports a missing `SwiftUIMacros` plugin with the macOS 27 SDK,
+select an installed 26.x SDK using `SDKROOT` for both commands. This local build was verified with
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and the macOS 14 deployment target.

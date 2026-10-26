@@ -1,5 +1,20 @@
 import Foundation
 
+/// Atomic process ownership for the agent. Keep the descriptor open for the process lifetime;
+/// unlike a status probe followed by unlink/bind, simultaneous starts cannot both acquire it.
+final class AgentLock {
+    private let descriptor: Int32
+
+    init?(path: String) {
+        let fd = Darwin.open(path, O_CREAT | O_RDWR | O_CLOEXEC, mode_t(0o600))
+        guard fd >= 0 else { return nil }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); return nil }
+        descriptor = fd
+    }
+
+    deinit { close(descriptor) }
+}
+
 /// Line-based Unix socket: a client sends one request (`status`, `enable`, `disable`, `watch`) and
 /// gets the agent's state back as one JSON line; `watch` keeps streaming a line per change.
 final class SocketServer {
@@ -69,6 +84,13 @@ enum SocketClient {
     static func request(_ line: String, onState: (AgentState) -> Bool) -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         defer { close(fd) }
+        var noSignal: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+        if line != "watch" {
+            var timeout = timeval(tv_sec: 2, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        }
         var addr = sockaddr_un.make(Socket.path)
         let connected = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }

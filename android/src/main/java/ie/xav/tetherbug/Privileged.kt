@@ -38,8 +38,10 @@ internal object Privileged {
         HiddenApiBypass.addHiddenApiExemptions("")
     }
 
-    fun isReady(): Boolean =
+    fun isReady(): Boolean = runCatching {
+        // The server can die between the ping and the permission call.
         Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+    }.getOrDefault(false)
 
     /** WifiManager#getWifiApState (hidden; needs only ACCESS_WIFI_STATE). */
     fun apState(wifiManager: WifiManager): Int =
@@ -109,23 +111,6 @@ internal object Privileged {
     fun setAppleIe(enabled: Boolean): Boolean = updateSoftApConfig { builderClass, builder ->
         val elements = if (enabled) listOf(ScanResult.InformationElement(EID_VSA, 0, APPLE_PERSONAL_HOTSPOT)) else emptyList()
         builderClass.getMethod("setVendorElements", List::class.java).invoke(builder, elements)
-    }
-
-    /** Android's auto-off timeout in whole minutes, 0 when auto-off is off, or null for anything else. */
-    fun autoOffMinutes(): Int? {
-        val config = softApConfig(service("wifi", WIFI_MANAGER))
-        if (!(config.javaClass.getMethod("isAutoShutdownEnabled").invoke(config) as Boolean)) return 0
-        val millis = config.javaClass.getMethod("getShutdownTimeoutMillis").invoke(config) as Long
-        return if (millis > 0 && millis % 60_000 == 0L) (millis / 60_000).toInt() else null
-    }
-
-    /**
-     * Android turns the hotspot off once nothing has been connected for its shutdown timeout. Sets
-     * that timeout in minutes; 0 turns auto-off off.
-     */
-    fun setAutoOffMinutes(minutes: Int): Boolean = updateSoftApConfig { builderClass, builder ->
-        builderClass.getMethod("setAutoShutdownEnabled", Boolean::class.java).invoke(builder, minutes > 0)
-        if (minutes > 0) builderClass.getMethod("setShutdownTimeoutMillis", Long::class.java).invoke(builder, minutes * 60_000L)
     }
 
     /**

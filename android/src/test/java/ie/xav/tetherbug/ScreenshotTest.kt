@@ -26,8 +26,6 @@ class ScreenshotTest {
             service = TetherState.Snapshot(running = true, advertising = true, hotspot = 2, connectedMacs = 1),
             pairedMacs = listOf("MacBook"),
             appleIe = true,
-            autoOff = 5,
-            autoOffMinutes = 5,
             theme = ThemeStyle.PURPLE,
             iconStyle = AppIcon.Style.PURPLE,
             version = "1.0.0",

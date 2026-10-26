@@ -1,8 +1,17 @@
+import AppKit
 import CoreBluetooth
 import CoreWLAN
 import Foundation
 import Network
 import UserNotifications
+
+/// Keep the existing maintenance timer active while the native dropdown tracks events.
+@discardableResult
+func scheduleAgentMaintenance(_ tick: @escaping () -> Void) -> Timer {
+    let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in tick() }
+    RunLoop.main.add(timer, forMode: .eventTracking)
+    return timer
+}
 
 /// Background agent: keeps the Bluetooth LE link to the phone, decides when to ask for the hotspot,
 /// and serves its state over a local socket to the app and the CLI.
@@ -11,8 +20,17 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private var phone: CBPeripheral?
     private var command: CBCharacteristic?
     private var credentials: CBCharacteristic?
+    private var statusCharacteristic: CBCharacteristic?
     private var password: String? // kept in memory only
     private var server: SocketServer!
+    private var agentLock: AgentLock?
+    private var outstandingWrite: CBCharacteristic?
+    private var reconnectRequested = false
+    private var recovery = BluetoothRecovery(preferred: Settings.preferredPhone)
+    private var wakeObserver: NSObjectProtocol?
+    private var nextReadinessCheck = Date.distantPast
+    private let control = HotspotControl()
+    private var menuBar: MenuBarController?
     private let wifi = NWPathMonitor(requiredInterfaceType: .wifi)
     private let scanQueue = DispatchQueue(label: "ie.xav.tetherbug.scan")
     private var offlineSince: Date?
@@ -20,10 +38,20 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private var nextRetry = Date.distantPast
     private var pendingFullScan: DispatchWorkItem? // the full-scan fallback while the frequency is unknown
     private var state = AgentState() {
-        didSet { if state != oldValue { server.broadcast(state) } }
+        didSet {
+            if state != oldValue {
+                server?.broadcast(state)
+                menuBar?.update(state)
+            }
+        }
     }
 
     func run() {
+        guard let lease = AgentLock(path: Socket.path + ".lock") else {
+            note("cannot acquire the agent lock; another agent may be running")
+            return
+        }
+        agentLock = lease
         // One agent per user: a second copy (a login item plus a manual run, say) must not take the
         // socket from the first. A clean exit isn't restarted by launchd (KeepAlive SuccessfulExit=false).
         if SocketClient.request("status", onState: { _ in false }) {
@@ -31,13 +59,30 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             exit(0)
         }
         server = SocketServer(path: Socket.path) { [weak self] line in self?.handle(line) }
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        menuBar = MenuBarController(
+            onToggle: { [weak self] in self?.toggleFromMenu() },
+            onAutomatic: { [weak self] on in self?.setAutomatic(on) },
+            onSettings: { [weak self] in self?.openSettings() },
+            onQuit: { [weak self] in self?.quit() }
+        )
+        app.delegate = menuBar
+        publishControl()
         central = CBCentralManager(delegate: self, queue: .main)
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.clearPhoneConnection()
+            self?.recovery.restart()
+            self?.maintainConnection()
+        }
         wifi.pathUpdateHandler = { [weak self] path in DispatchQueue.main.async { self?.wifiChanged(path) } }
         wifi.start(queue: .main)
         // Re-evaluate retries even when nothing else changes.
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
+        scheduleAgentMaintenance { [weak self] in self?.tick() }
         note("agent started; socket at \(Socket.path)")
-        RunLoop.main.run()
+        app.run()
     }
 
     // MARK: Socket requests
@@ -46,6 +91,10 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         switch line {
         case "enable": request(true, reason: "manual")
         case "disable": request(false, reason: "manual")
+        case "toggle": toggleFromMenu()
+        case "automatic on": setAutomatic(true)
+        case "automatic off": setAutomatic(false)
+        case "quit": quit()
         case "password":
             var reply = state
             reply.password = password
@@ -75,9 +124,26 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func tick() {
-        guard Settings.onNoWifi, offlineSince != nil, Date() >= nextRetry else { return }
-        let hotspot = state.status?.hotspot
-        guard hotspot != .on, hotspot != .starting else { return }
+        guard state.stopping != true else { return }
+        maintainConnection()
+        // Shizuku can recover without an AP/battery notification from Android. Read its current
+        // readiness while unavailable, rather than leaving an old "not ready" snapshot forever.
+        if state.connected, state.status?.controllable == false, Date() >= nextReadinessCheck,
+           let phone, let statusCharacteristic {
+            nextReadinessCheck = Date().addingTimeInterval(10)
+            phone.readValue(for: statusCharacteristic)
+        }
+        control.refresh(state)
+        publishControl()
+        if control.needsReconnect {
+            if state.stopping != true, !reconnectRequested, let phone {
+                reconnectRequested = true
+                central.cancelPeripheralConnection(phone)
+            }
+            return
+        }
+        guard state.stopping != true, control.shouldAutomaticallyEnable(state),
+              command != nil, offlineSince != nil, Date() >= nextRetry else { return }
         request(true, reason: "no Wi-Fi")
         nextRetry = Date().addingTimeInterval(backoff)
         backoff = min(backoff * 2, 30)
@@ -89,32 +155,120 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             note("\(on ? "enable" : "disable") requested (\(reason)) but the phone isn't connected")
             return
         }
+        guard control.beginRequest(on, state: state) else { return }
+        publishControl()
+        guard control.writePending else { return } // already at the requested state
         note("\(on ? "enable" : "disable") (\(reason))")
+        outstandingWrite = command
         phone.writeValue(Data([on ? Gatt.enable : Gatt.disable]), for: command, type: .withResponse)
+    }
+
+    private func toggleFromMenu() {
+        guard let phone, let command, let on = control.toggle(state) else { return }
+        state.lastRequest = "\(on ? "enable" : "disable") (menu) at \(ISO8601DateFormatter().string(from: Date()))"
+        // Publish the pause before issuing Off, so no retry can immediately turn it back on.
+        publishControl()
+        note("\(on ? "enable" : "disable") (menu)")
+        outstandingWrite = command
+        phone.writeValue(Data([on ? Gatt.enable : Gatt.disable]), for: command, type: .withResponse)
+    }
+
+    private func setAutomatic(_ on: Bool) {
+        control.automatic = on
+        backoff = 2
+        nextRetry = max(Date(), (offlineSince ?? Date()).addingTimeInterval(TimeInterval(Settings.disconnectWait)))
+        tick()
+    }
+
+    private func publishControl() {
+        var snapshot = state
+        snapshot.automatic = control.automatic
+        snapshot.automaticPausedUntil = control.pausedUntil
+        snapshot.requestPending = control.isPending
+        snapshot.requestError = control.error
+        state = snapshot
+    }
+
+    private func openSettings() {
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: "ie.xav.tetherbug")
+        if let window = others.first(where: { $0.processIdentifier != getpid() && $0.activationPolicy == .regular }) {
+            window.activate(options: [.activateAllWindows])
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        // An accessory agent shares the bundle ID; a normal open would target the agent itself.
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { [weak self] _, error in
+            if let error { DispatchQueue.main.async { self?.note("couldn't open settings: \(error.localizedDescription)") } }
+        }
+    }
+
+    private func quit() {
+        guard state.stopping != true else { return }
+        state.stopping = true
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: "ie.xav.tetherbug")
+            where app.processIdentifier != getpid() && app.activationPolicy == .regular {
+            app.terminate()
+        }
+        // Let the settings watcher receive `stopping` before the socket closes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { NSApp.terminate(nil) }
     }
 
     // MARK: Bluetooth
 
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        state.bluetooth = ["unknown", "resetting", "unsupported", "unauthorized", "off", "on"][min(central.state.rawValue, 5)]
-        guard central.state == .poweredOn else {
-            state.connected = false
-            return
-        }
-        // A bonded phone may already be connected at the system level; otherwise scan for it.
-        if let known = central.retrieveConnectedPeripherals(withServices: [Gatt.service]).first {
-            connect(known)
-        } else {
-            central.scanForPeripherals(withServices: [Gatt.service])
+    private func maintainConnection() {
+        guard state.stopping != true else { return }
+        switch recovery.due(poweredOn: central.state == .poweredOn) {
+        case .discover:
+            let known = central.retrieveConnectedPeripherals(withServices: [Gatt.service])
+                .first { recovery.accepts($0.identifier) }
+            if let known { connect(known) }
+            else if let id = recovery.preferred,
+                    let saved = central.retrievePeripherals(withIdentifiers: [id]).first { connect(saved) }
+            if !central.isScanning { central.scanForPeripherals(withServices: [Gatt.service]) }
+        case .resetConnection:
+            note("Bluetooth connection stalled; rediscovering the phone")
+            clearPhoneConnection()
+        case nil: break
         }
     }
 
-    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber) {
+    /// Invalidates old characteristics and write ownership before any new connection can be used.
+    private func clearPhoneConnection() {
+        let old = phone
+        phone = nil
+        old?.delegate = nil
+        command = nil
+        credentials = nil
+        statusCharacteristic = nil
+        password = nil
+        outstandingWrite = nil
+        reconnectRequested = false
+        state.connected = false
+        state.status = nil
+        control.refresh(state)
+        publishControl()
         central.stopScan()
+        if let old, old.state != .disconnected { central.cancelPeripheralConnection(old) }
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        state.bluetooth = ["unknown", "resetting", "unsupported", "unauthorized", "off", "on"][min(central.state.rawValue, 5)]
+        guard central.state == .poweredOn else {
+            clearPhoneConnection()
+            recovery.restart()
+            return
+        }
+        recovery.restart()
+        maintainConnection()
+    }
+
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber) {
         connect(peripheral)
     }
 
     private func connect(_ peripheral: CBPeripheral) {
+        guard recovery.beginConnection(to: peripheral.identifier) else { return }
         phone = peripheral
         peripheral.delegate = self
         state.phone = peripheral.name
@@ -122,34 +276,40 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard phone === peripheral else { return }
         note("connected to \(peripheral.name ?? "phone")")
+        state.status = nil // wait for a fresh report after reconnecting
         state.connected = true
+        recovery.connected()
         peripheral.discoverServices([Gatt.service])
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        guard phone === peripheral, peripheral.state == .disconnected else { return }
         note("disconnected: \(error?.localizedDescription ?? "no error")")
-        state.connected = false
-        command = nil
-        credentials = nil
-        // A pending connect has no timeout: the link comes back as soon as the phone is in range.
-        central.connect(peripheral)
+        recovery.disconnected()
+        clearPhoneConnection()
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        guard phone === peripheral, peripheral.state == .disconnected else { return }
         note("connect failed: \(error?.localizedDescription ?? "unknown")")
-        central.connect(peripheral)
+        recovery.disconnected()
+        clearPhoneConnection()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard phone === peripheral, error == nil else { return }
         guard let service = peripheral.services?.first(where: { $0.uuid == Gatt.service }) else { return }
         peripheral.discoverCharacteristics([Gatt.status, Gatt.command, Gatt.credentials], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard phone === peripheral, error == nil else { return }
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
             case Gatt.status:
+                statusCharacteristic = characteristic
                 peripheral.readValue(for: characteristic)
                 peripheral.setNotifyValue(true, for: characteristic)
             case Gatt.command:
@@ -163,12 +323,18 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard phone === peripheral else { return }
         if let error { return note("read failed: \(error.localizedDescription)") }
-        if characteristic.uuid == Gatt.credentials, let value = characteristic.value {
+        if characteristic === credentials, let value = characteristic.value {
             password = String(decoding: value, as: UTF8.self)
             return
         }
-        guard characteristic.uuid == Gatt.status, let value = characteristic.value, let status = PhoneStatus(value) else { return }
+        guard characteristic === statusCharacteristic, let value = characteristic.value,
+              let status = PhoneStatus(value), command != nil,
+              recovery.receivedStatus(from: peripheral.identifier) else { return }
+        Settings.preferredPhone = recovery.preferred
+        central.stopScan()
+        nextReadinessCheck = Date().addingTimeInterval(10)
         // Re-read the password whenever the hotspot comes on, in case it was changed on the phone.
         if status.hotspot != state.status?.hotspot { note("phone hotspot \(status.hotspot.rawValue)") }
         if status.hotspot == .on, state.status?.hotspot != .on || (state.status?.frequency == 0 && status.frequency != 0) {
@@ -176,10 +342,15 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         }
         if status.hotspot == .on, state.status?.hotspot != .on, let credentials { peripheral.readValue(for: credentials) }
         state.status = status
+        control.refresh(state, receivedStatus: true)
         tick()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == Gatt.command, characteristic === outstandingWrite else { return }
+        outstandingWrite = nil
+        control.writeCompleted(error: error?.localizedDescription)
+        publishControl()
         if let error { note("command failed: \(error.localizedDescription)") }
     }
 
@@ -250,10 +421,11 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     /// The phone restarted its GATT service (app update, service restart): the old characteristics
     /// are gone, so rediscover and re-subscribe instead of writing into the void.
     func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        guard phone === peripheral, invalidatedServices.contains(where: { $0.uuid == Gatt.service }) else { return }
         note("phone's service changed; rediscovering")
-        command = nil
-        credentials = nil
-        peripheral.discoverServices([Gatt.service])
+        clearPhoneConnection()
+        recovery.restart()
+        maintainConnection()
     }
 }
 

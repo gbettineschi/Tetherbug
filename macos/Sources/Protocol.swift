@@ -46,6 +46,13 @@ struct AgentState: Codable, Equatable {
     var status: PhoneStatus?
     var wifiOffline = false
     var lastRequest: String?
+    /// Optional so clients can still decode snapshots from older agents.
+    var automatic: Bool?
+    var automaticPausedUntil: Date?
+    var requestPending: Bool?
+    var requestError: String?
+    /// An explicit menu Quit also tells an open settings window not to restart the agent.
+    var stopping: Bool?
     /// The launchd job running the agent when it isn't the app's own login item (e.g. nix-darwin's
     /// `org.nixos.tetherbug`); nil for the login item, the window's own agent or a terminal.
     var managedBy: String? = {
@@ -61,6 +68,11 @@ struct AgentState: Codable, Equatable {
 /// binary is launched (inside the bundle or through a symlink).
 enum Settings {
     static let defaults = UserDefaults(suiteName: "ie.xav.tetherbug.settings") ?? .standard
+
+    static var preferredPhone: UUID? {
+        get { defaults.string(forKey: "preferredPhone").flatMap(UUID.init(uuidString:)) }
+        set { defaults.set(newValue?.uuidString, forKey: "preferredPhone") }
+    }
 
     /// Ask for the hotspot when the Mac's Wi-Fi has no connection.
     static var onNoWifi: Bool {

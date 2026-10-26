@@ -28,6 +28,7 @@ lipo -create "$work"/Tetherbug-* -output "$app/Contents/MacOS/Tetherbug"
 
 # App icon, rendered by the binary itself from the generated buddy outline (no raster assets in git).
 mkdir -p "$app/Contents/Resources"
+cp "$here/../LICENSE" "$app/Contents/Resources/LICENSE.txt"
 "$app/Contents/MacOS/Tetherbug" render-icon "$app/Contents/Resources/AppIcon.icns"
 
 cat > "$app/Contents/Info.plist" <<EOF

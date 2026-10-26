@@ -93,16 +93,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.layout.width
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -119,6 +109,7 @@ class MainActivity : ComponentActivity() {
     private var tick by mutableIntStateOf(0)
     private val shizukuChanged = Shizuku.OnRequestPermissionResultListener { _, _ -> tick++ }
     private val shizukuBinder = Shizuku.OnBinderReceivedListener { tick++ }
+    private val shizukuDead = Shizuku.OnBinderDeadListener { runOnUiThread { tick++ } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,6 +119,7 @@ class MainActivity : ComponentActivity() {
         actionBar?.hide()
         Shizuku.addRequestPermissionResultListener(shizukuChanged)
         Shizuku.addBinderReceivedListenerSticky(shizukuBinder)
+        Shizuku.addBinderDeadListener(shizukuDead)
         setContent { Theme(remember(tick) { AppTheme.get(this) }) { SetupScreen(tick) { tick++ } } }
     }
 
@@ -139,6 +131,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         Shizuku.removeRequestPermissionResultListener(shizukuChanged)
         Shizuku.removeBinderReceivedListener(shizukuBinder)
+        Shizuku.removeBinderDeadListener(shizukuDead)
         super.onDestroy()
     }
 }
@@ -150,7 +143,7 @@ private object Links {
 }
 
 internal val PERMISSIONS =
-    arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.POST_NOTIFICATIONS)
+    arrayOf(Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT)
 
 /** App colours: the wallpaper's (Material You) or xav.ie's purple palette. */
 enum class ThemeStyle { SYSTEM, PURPLE }
@@ -291,10 +284,6 @@ internal data class SetupUiState(
     val service: TetherState.Snapshot,
     val pairedMacs: List<String>,
     val appleIe: Boolean,
-    // Android's auto-off timeout: null if unknown, 0 if off.
-    val autoOff: Int?,
-    // The timeout shown in the field: the live one, or the last one chosen while auto-off is off.
-    val autoOffMinutes: Int,
     val theme: ThemeStyle,
     val iconStyle: AppIcon.Style,
     val version: String?,
@@ -307,8 +296,7 @@ internal class SetupActions(
     val setServiceRunning: (Boolean) -> Unit = {},
     val openBluetoothSettings: () -> Unit = {},
     val setAppleIe: (Boolean) -> Unit = {},
-    val setAutoOff: (Boolean) -> Unit = {},
-    val setAutoOffMinutes: (Int) -> Unit = {},
+    val openHotspotSettings: () -> Unit = {},
     val setTheme: (ThemeStyle) -> Unit = {},
     val setIconStyle: (AppIcon.Style) -> Unit = {},
 )
@@ -318,22 +306,11 @@ private fun SetupScreen(tick: Int, refresh: () -> Unit) {
     val context = LocalContext.current
     val service by TetherState.snapshot.collectAsState()
     val requestPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh() }
-    val prefs = remember { context.getSharedPreferences("tetherbug", Context.MODE_PRIVATE) }
 
     // Recomputed on every tick so the checklist follows changes made in other apps.
     val permissionsGranted = tick >= 0 && PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     val shizukuReady = Privileged.isReady()
     val iconStyle = remember(tick) { AppIcon.current(context) }
-    // Tetherbug's default turn-off time, set once as soon as Shizuku can.
-    LaunchedEffect(shizukuReady) {
-        if (shizukuReady && !prefs.contains("auto_off_default_applied") && runCatching { Privileged.setAutoOffMinutes(5) }.getOrDefault(false)) {
-            prefs.edit().putBoolean("auto_off_default_applied", true).apply()
-            refresh()
-        }
-    }
-    val autoOff = if (shizukuReady) runCatching { Privileged.autoOffMinutes() }.getOrNull() else null
-    // The last timeout chosen here, kept while auto-off is switched off.
-    val minutes = autoOff?.takeIf { it > 0 } ?: prefs.getInt("auto_off_minutes", 5)
 
     SetupContent(
         SetupUiState(
@@ -343,8 +320,6 @@ private fun SetupScreen(tick: Int, refresh: () -> Unit) {
             service = service,
             pairedMacs = if (permissionsGranted) pairedComputers(context) else emptyList(),
             appleIe = shizukuReady && runCatching { Privileged.hasAppleIe() }.getOrDefault(false),
-            autoOff = autoOff,
-            autoOffMinutes = minutes,
             theme = AppTheme.get(context),
             iconStyle = iconStyle,
             version = context.packageManager.getPackageInfo(context.packageName, 0).versionName,
@@ -362,14 +337,10 @@ private fun SetupScreen(tick: Int, refresh: () -> Unit) {
                 runCatching { Privileged.setAppleIe(it) }
                 refresh()
             },
-            setAutoOff = {
-                runCatching { Privileged.setAutoOffMinutes(if (it) minutes else 0) }
-                refresh()
-            },
-            setAutoOffMinutes = { chosen ->
-                prefs.edit().putInt("auto_off_minutes", chosen).apply()
-                if (shizukuReady && chosen != minutes) runCatching { Privileged.setAutoOffMinutes(chosen) }
-                refresh()
+            openHotspotSettings = {
+                val hotspot = Intent("android.settings.WIFI_AP_SETTINGS")
+                val fallback = Intent(Settings.ACTION_WIRELESS_SETTINGS)
+                context.startActivity(if (hotspot.resolveActivity(context.packageManager) != null) hotspot else fallback)
             },
             setTheme = {
                 AppTheme.set(context, it)
@@ -435,8 +406,8 @@ internal fun SetupContent(state: SetupUiState, actions: SetupActions, list: Lazy
                 Step(
                     number = 1,
                     done = state.permissionsGranted,
-                    title = "Bluetooth & notifications",
-                    body = "Lets the app advertise itself to your Mac, accept its connection, and show the always-on service notification.",
+                    title = "Bluetooth",
+                    body = "Lets your Mac discover and connect to this phone. Notifications can be turned off in Android settings.",
                     action = ("Allow" to actions.allowPermissions).takeUnless { state.permissionsGranted },
                 )
             }
@@ -449,7 +420,7 @@ internal fun SetupContent(state: SetupUiState, actions: SetupActions, list: Lazy
                         if (state.shizukuRunning) {
                             "Turning the hotspot on needs system rights. Shizuku grants them without root."
                         } else {
-                            "Shizuku isn't running. Start it in the Shizuku app (it stops after every reboot), then come back."
+                            "Shizuku isn't running. Start it in the Shizuku app, then come back."
                         },
                     action = ("Allow" to actions.allowShizuku).takeIf { state.shizukuRunning && !state.shizukuReady },
                 )
@@ -521,73 +492,15 @@ internal fun SetupContent(state: SetupUiState, actions: SetupActions, list: Lazy
             }
             item {
                 SiteCard {
-                    val minutes = state.autoOffMinutes
-                    var draft by remember(minutes) { mutableStateOf(minutes.toString()) }
-                    var editing by remember { mutableStateOf(false) }
-                    val focusManager = LocalFocusManager.current
-                    fun commit() {
-                        val chosen = (draft.toIntOrNull() ?: minutes).coerceIn(1, 120)
-                        draft = chosen.toString()
-                        actions.setAutoOffMinutes(chosen)
-                    }
-                    ListItem(
-                        headlineContent = { Text("Turn off when unused") },
-                        supportingContent = {
-                            Text(
-                                "Android switches the hotspot off once nothing has been connected for a while. Your Mac " +
-                                    "counts while it's on the hotspot, so the wait starts when it leaves, and another " +
-                                    "device can still join in the meantime. Takes effect the next time the hotspot starts.",
-                            )
-                        },
-                        trailingContent = {
-                            SiteSwitch(
-                                checked = state.autoOff != 0,
-                                enabled = state.shizukuReady,
-                                onCheckedChange = actions.setAutoOff,
-                            )
-                        },
-                        colors = cardItemColors(),
-                    )
-                    if (state.autoOff != 0) {
-                        // Indented: it qualifies the switch above.
-                        Row(
-                            Modifier.padding(start = 32.dp, end = 16.dp, bottom = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Text("After unused for")
-                            // A compact field: OutlinedTextField's 56dp minimum is too tall for a one-line row.
-                            BasicTextField(
-                                value = draft,
-                                onValueChange = { draft = it.filter(Char::isDigit).take(3) },
-                                enabled = state.shizukuReady,
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontFamily = FontFamily.Monospace,
-                                    textAlign = TextAlign.End,
-                                ),
-                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                                modifier = Modifier.width(72.dp).onFocusChanged {
-                                    if (editing && !it.isFocused) commit()
-                                    editing = it.isFocused
-                                },
-                                decorationBox = { field ->
-                                    Box(
-                                        Modifier
-                                            .border(
-                                                1.dp,
-                                                if (editing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                                RoundedCornerShape(10.dp),
-                                            )
-                                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                                    ) { field() }
-                                },
-                            )
-                            Text("min", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Automatic shutdown", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Choose when the hotspot turns off with no devices connected in your phone's hotspot settings. " +
+                                "Tetherbug leaves that setting unchanged.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FilledTonalButton(onClick = actions.openHotspotSettings) { Text("Hotspot settings") }
                     }
                 }
             }
