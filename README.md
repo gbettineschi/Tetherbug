@@ -20,7 +20,7 @@ brew update
 brew upgrade --cask gbettineschi/tetherbug/tetherbug-personal
 ```
 
-If an existing copy is already running, quit it and deliberately choose the Homebrew installation before switching; these commands are not needed for Android/Obtainium.
+When moving from a copy at another location, turn off **Run in the background** in that copy and quit it first. Install and open the Homebrew copy, then enable **Run in the background** there. This moves the login helper to the new app location without deleting preferences. These commands are not needed for Android/Obtainium.
 
 See [release and signing instructions](docs/personal-releases.md), [Mac setup](docs/macos.md), and the [BLE protocol](docs/protocol.md).
 
