@@ -1,6 +1,10 @@
 # Tetherbug Personal
 
-A personal fork of [xav-ie/Tetherbug](https://github.com/xav-ie/Tetherbug) with patches for **Android and macOS**. It controls an Android hotspot from a native Mac menu over encrypted Bluetooth LE, without root or a shared Wi-Fi network. Android hotspot control requires Shizuku.
+A fork of [xav-ie/Tetherbug](https://github.com/xav-ie/Tetherbug), made for my Mac and Android phone. I added native macOS hotspot controls and Android Bluetooth recovery fixes.
+
+Control an Android hotspot from the Mac menu bar over encrypted Bluetooth LE, without root or a shared Wi-Fi network. Android hotspot control requires Shizuku.
+
+**My changes are 100% vibe-coded, for personal use, and provided as is.** No warranty or promised support. The original app is the work of its upstream authors.
 
 ## Downloads and updates
 
@@ -21,6 +25,8 @@ brew upgrade --cask gbettineschi/tetherbug/tetherbug-personal
 ```
 
 When moving from a copy at another location, turn off **Launch at login** in that copy and quit it first. Install and open the Homebrew copy, then enable **Launch at login** there. This moves the login helper to the new app location without deleting preferences. These commands are not needed for Android/Obtainium.
+
+The same tap also carries [Agent Handler](https://github.com/gbettineschi/agent-handler): `brew install --cask gbettineschi/tetherbug/agent-handler`.
 
 See [release and signing instructions](docs/personal-releases.md), [Mac setup](docs/macos.md), and the [BLE protocol](docs/protocol.md).
 
