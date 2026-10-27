@@ -26,6 +26,8 @@ Homebrew tracks `Casks/tetherbug-personal.rb` in the shared [public tap](https:/
 
 On the tested Mac, the first registration of the downloaded ad-hoc build was marked enabled but macOS rejected its helper with a launch-constraint error. After approving **Open Anyway**, switching **Launch at login** off and back on in the new app rebuilt the registration. The resulting launchd-owned helper was verified running after the settings window closed. This is a verified first-install recovery, not a promise that arbitrary future signature changes need no approval. The personal release build has no Developer ID/notarization configured.
 
+After the Homebrew upgrade to **0.1.7**, the app could connect through its temporary session helper while the login helper failed with `Launch Constraint Violation` / `EX_CONFIG`. A normal launch from Finder, followed by switching **Launch at login** off and on in that app, rebuilt the registration successfully. The launchd-owned helper remained running with the settings window closed and connected to the S23 with Shizuku ready. No **Open Anyway** button appeared in that recovery, and no quarantine or global security setting was changed. This verifies that recovery sequence on this Mac; it does not identify the exact OS cache/approval cause or replace a physical reboot test.
+
 ## Making the next release
 
 1. Review and merge wanted upstream commits. Preserve the personal changes, Android package ID and signing identity.

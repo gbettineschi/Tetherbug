@@ -32,4 +32,5 @@
 - [x] Verified all four downloaded GitHub asset digests, ZIP checksums, universal Mac signature/architectures and APK identity 0.1.7/code107.
 - [x] Shared tap commit b36c5da pins the published Mac ZIP; Homebrew installed 0.1.7 and the installed binary matches the release.
 - [x] Running session helper connects to the S23 with Shizuku ready; Android device installation and settings were not changed.
-- [ ] Complete per-app Gatekeeper approval and verify the launchd-managed login helper. The session helper works, but launchd rejected the new ad-hoc build with Launch Constraint Violation / EX_CONFIG. User approval for the app exception is pending; no security protection was bypassed.
+- [x] Verified the launchd-managed helper running with parent PID1 after settings closed, connected to the S23 with Shizuku ready. The initial Launch Constraint Violation / EX_CONFIG was resolved by a normal Finder launch followed by Launch at login off/on. No Open Anyway button appeared and no security protection was bypassed.
+- [x] Source, release assets and shared Homebrew channel are published; Mac 0.1.7 is installed. No Android device update, physical reboot or hotspot shutdown test was performed.
