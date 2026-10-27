@@ -28,5 +28,8 @@
 - [x] New release-source guard tests: 3 passed.
 - [x] User approved nearby-connected shutdown, including native idle timeout.
 - [x] Independent final-policy review: no blocking findings; 41 Mac tests and 3 source-publication tests passed.
-- [ ] Complete release packaging, push and automatic tag publication.
-- [ ] Verify GitHub assets, shared Homebrew tap and installed Mac helper.
+- [x] Published source 5320bf3 and immutable v0.1.7; release workflow 40571481431 passed packaging, retained Android certificate checks and shared-tap publication.
+- [x] Verified all four downloaded GitHub asset digests, ZIP checksums, universal Mac signature/architectures and APK identity 0.1.7/code107.
+- [x] Shared tap commit b36c5da pins the published Mac ZIP; Homebrew installed 0.1.7 and the installed binary matches the release.
+- [x] Running session helper connects to the S23 with Shizuku ready; Android device installation and settings were not changed.
+- [ ] Complete per-app Gatekeeper approval and verify the launchd-managed login helper. The session helper works, but launchd rejected the new ad-hoc build with Launch Constraint Violation / EX_CONFIG. User approval for the app exception is pending; no security protection was bypassed.
