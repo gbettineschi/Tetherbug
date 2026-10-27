@@ -1,5 +1,33 @@
 import Foundation
 
+enum AutomaticPauseDuration: String, CaseIterable {
+    case minutes15, minutes30, hour1, hours2, hours3, today, indefinitely
+
+    var title: String {
+        switch self {
+        case .minutes15: return "15 minutes"
+        case .minutes30: return "30 minutes"
+        case .hour1: return "1 hour"
+        case .hours2: return "2 hours"
+        case .hours3: return "3 hours"
+        case .today: return "Today"
+        case .indefinitely: return "Indefinitely"
+        }
+    }
+
+    func deadline(from now: Date, calendar: Calendar) -> Date? {
+        switch self {
+        case .minutes15: return now.addingTimeInterval(15 * 60)
+        case .minutes30: return now.addingTimeInterval(30 * 60)
+        case .hour1: return now.addingTimeInterval(60 * 60)
+        case .hours2: return now.addingTimeInterval(2 * 60 * 60)
+        case .hours3: return now.addingTimeInterval(3 * 60 * 60)
+        case .today: return calendar.dateInterval(of: .day, for: now)?.end
+        case .indefinitely: return nil
+        }
+    }
+}
+
 /// Manual requests and automatic activation share one policy. The phone remains the source of
 /// truth for hotspot state; a Bluetooth write is not a confirmation that the hotspot changed.
 final class HotspotControl {
@@ -13,6 +41,12 @@ final class HotspotControl {
 
     init(defaults: UserDefaults = Settings.defaults) {
         self.defaults = defaults
+        // Earlier local trials stored indefinite suspension separately. Keep those users off.
+        if defaults.bool(forKey: "automaticPausedIndefinitely") {
+            defaults.set(false, forKey: "onNoWifi")
+            defaults.removeObject(forKey: "automaticPausedUntil")
+        }
+        defaults.removeObject(forKey: "automaticPausedIndefinitely")
         lastAutomatic = defaults.object(forKey: "onNoWifi") as? Bool ?? true
     }
 
@@ -31,6 +65,20 @@ final class HotspotControl {
             if let newValue { defaults.set(newValue, forKey: "automaticPausedUntil") }
             else { defaults.removeObject(forKey: "automaticPausedUntil") }
         }
+    }
+
+    /// Menu controls can resume activation even when it was disabled in Settings.
+    func setAutomaticActive(_ active: Bool) {
+        automatic = active
+    }
+
+    func pauseAutomatic(for duration: AutomaticPauseDuration, now: Date = Date(), calendar: Calendar = .current) {
+        if duration == .indefinitely {
+            setAutomaticActive(false)
+            return
+        }
+        if !automatic { automatic = true }
+        pausedUntil = duration.deadline(from: now, calendar: calendar)
     }
 
     var writePending: Bool { writeStarted != nil }
@@ -54,7 +102,7 @@ final class HotspotControl {
         guard canToggle(state) else { return false }
         if on { resume() }
         else if pauseAutomaticWhenTurningOff && automatic {
-            pausedUntil = now.addingTimeInterval(15 * 60)
+            pauseAutomatic(now: now)
         }
         pending = state.status?.hotspot == (on ? .on : .off) ? nil : (on, now)
         writeStarted = pending == nil ? nil : now
@@ -108,11 +156,13 @@ final class HotspotControl {
         }
     }
 
-    func resume() { pausedUntil = nil }
+    func resume() {
+        pausedUntil = nil
+    }
 
     private func pauseAutomatic(now: Date) {
         guard automatic else { return }
-        pausedUntil = max(pausedUntil ?? .distantPast, now.addingTimeInterval(15 * 60))
+        pausedUntil = max(pausedUntil ?? .distantPast, now.addingTimeInterval(5 * 60))
     }
 
     /// At most one unresolved transport write exists. A state notification can arrive before

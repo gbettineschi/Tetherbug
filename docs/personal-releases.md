@@ -6,7 +6,7 @@ Both apps are patched. Install updates from [gbettineschi/Tetherbug](https://git
 
 On the phone, with Obtainium installed, [open the prepared import](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22ie.xav.tetherbug%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Fgbettineschi%2FTetherbug%22%2C%22author%22%3A%22gbettineschi%22%2C%22name%22%3A%22Tetherbug%20Personal%22%7D) and confirm adding **Tetherbug Personal**. This imports the app’s package ID, fork URL and name; it does not install an APK silently. The readable source is [updates/obtainium.json](../updates/obtainium.json). The defaults use GitHub release APKs; no custom filters, login or token are needed for this single public app.
 
-Add `https://github.com/gbettineschi/Tetherbug` in Obtainium. Releases contain one APK; no asset filter is required. Release tags and Android version names match (`v0.1.7` / `0.1.7`). After importing an already installed personal build, Obtainium may initially offer the newer release. Install it as an update, without uninstalling or clearing data.
+Add `https://github.com/gbettineschi/Tetherbug` in Obtainium. Releases contain one APK; no asset filter is required. Release tags and Android version names match (`v0.1.8` / `0.1.8`). After importing an already installed personal build, Obtainium may initially offer the newer release. Install it as an update, without uninstalling or clearing data.
 
 The personal signing certificate SHA-256 is:
 

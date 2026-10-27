@@ -49,6 +49,7 @@ struct AgentState: Codable, Equatable {
     /// Optional so clients can still decode snapshots from older agents.
     var automatic: Bool?
     var automaticPausedUntil: Date?
+    var automaticSuspended: Bool { automaticPausedUntil != nil }
     var requestPending: Bool?
     var requestError: String?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.

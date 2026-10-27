@@ -8,6 +8,27 @@ func runMenuBarTests() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.accessory)
 
+    test("native command layout reserves the same space with and without the Auto checkmark") {
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onSettings: {}, onQuit: {})
+        // Measure command rows without the wide custom header masking native gutter changes.
+        menu.menu.removeItem(at: 0)
+        menu.menu.minimumWidth = 0
+        var state = phoneState()
+        state.automatic = false
+        menu.update(state)
+        menu.menu.update()
+        let offWidth = menu.menu.size.width
+        state.automatic = true
+        menu.update(state)
+        menu.menu.update()
+        let onWidth = menu.menu.size.width
+        state.automatic = false
+        menu.update(state)
+        menu.menu.update()
+        expect(offWidth == onWidth, "adding the native checkmark must not add a column or move the labels")
+        expect(menu.menu.size.width == onWidth, "removing the checkmark must preserve the reserved space")
+    }
+
     test("native menu keeps the persisted pause beside automatic mode without a Resume item") {
         var mode: Bool?
         let menu = MenuBarController(onToggle: {}, onAutomatic: { mode = $0 }, onSettings: {}, onQuit: {})
@@ -16,12 +37,83 @@ func runMenuBarTests() {
         state.automaticPausedUntil = now.addingTimeInterval(900)
         menu.update(state)
         let auto = menu.menu.items.first { $0.action == #selector(MenuBarController.changeAutomatic(_:)) }!
-        expect(auto.state == .on, "Auto checkbox follows snapshot")
-        expect(auto.attributedTitle?.string.contains("Paused until") == true, "expiry is on the Auto row")
+        expect(auto.state == .off, "suspended Auto has no checkmark")
+        expect(auto.attributedTitle?.string.contains("Turned off until") == true, "expiry is on the Auto row")
         expect(!menu.menu.items.contains { $0 !== auto && $0.title.localizedCaseInsensitiveContains("paused until") }, "no standalone pause row")
         expect(!menu.menu.items.contains { $0.title.localizedCaseInsensitiveContains("resume") }, "manual On is the resume control")
         menu.menu.performActionForItem(at: menu.menu.index(of: auto))
-        expect(mode == false, "Auto action requests disable")
+        expect(mode == true, "suspended Auto action requests resume")
+    }
+
+    test("duration submenu offers every requested duration and routes each selection") {
+        var selected: [AutomaticPauseDuration] = []
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onPauseAutomatic: { selected.append($0) }, onSettings: {}, onQuit: {})
+        var state = phoneState()
+        state.automatic = true
+        menu.update(state)
+        guard let item = menu.menu.items.first(where: { $0.title == "Turn off automatic mode for…" }), let submenu = item.submenu else {
+            expect(false, "native duration submenu exists"); return
+        }
+        expect(submenu.items.map(\.title) == ["15 minutes", "30 minutes", "1 hour", "2 hours", "3 hours", "Today", "Indefinitely"], "timed and indefinite choices are offered")
+        for index in submenu.items.indices { submenu.performActionForItem(at: index) }
+        expect(selected == AutomaticPauseDuration.allCases, "every native menu action reaches the selected policy")
+    }
+
+    test("Automatic Mode menu actions turn off without an expiry and resume the real policy") {
+        let (control, _) = environment()
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { control.setAutomaticActive($0) }, onSettings: {}, onQuit: {})
+        var state = phoneState()
+        state.automatic = true
+        menu.update(state)
+        let auto = menu.menu.items.first { $0.action == #selector(MenuBarController.changeAutomatic(_:)) }!
+        expect(auto.state == .on, "active automatic mode is checked")
+        menu.menu.performActionForItem(at: menu.menu.index(of: auto))
+        expect(!control.automatic && control.pausedUntil == nil, "click turns mode off without expiry")
+        state.automatic = control.automatic
+        state.automaticPausedUntil = control.pausedUntil
+        menu.update(state)
+        expect(auto.state == .off && auto.isEnabled, "Off item remains available to resume")
+        expect(auto.attributedTitle?.string == "Automatic Mode", "Off has no until label")
+        menu.menu.performActionForItem(at: menu.menu.index(of: auto))
+        expect(control.pausedUntil == nil && control.automatic, "second click re-enables automatic mode")
+    }
+
+    test("disabled automatic mode hides expiry and both controls remain available") {
+        var actions = 0
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in actions += 1 }, onPauseAutomatic: { _ in actions += 1 }, onSettings: {}, onQuit: {})
+        var state = phoneState()
+        state.automatic = false
+        menu.update(state)
+        let auto = menu.menu.items.first { $0.action == #selector(MenuBarController.changeAutomatic(_:)) }!
+        let durations = menu.menu.items.first { $0.submenu != nil }!
+        expect(auto.state == .off && auto.attributedTitle?.string == "Automatic Mode", "Off has no checkmark or expiry text")
+        expect(auto.isEnabled && durations.isEnabled, "suspended choices remain usable")
+        state.automatic = false
+        menu.update(state)
+        expect(auto.isEnabled && durations.isEnabled, "automatic controls stay available when mode is off")
+        expect(durations.submenu!.items.allSatisfy { $0.isEnabled }, "all durations stay available")
+        menu.changeAutomatic(nil)
+        menu.pauseAutomatic(durations.submenu!.items[0])
+        expect(actions == 2, "both controls work when automatic mode is off")
+        state.automatic = true
+        state.stopping = true
+        menu.update(state)
+        expect(!auto.isEnabled && !durations.isEnabled, "quitting also disables both rows")
+        menu.changeAutomatic(nil)
+        menu.pauseAutomatic(durations.submenu!.items[0])
+        expect(actions == 2, "quitting rejects further actions")
+    }
+
+    test("clicking unchecked Automatic Mode resumes from Settings Off") {
+        let (control, _) = environment(automatic: false)
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { control.setAutomaticActive($0) }, onSettings: {}, onQuit: {})
+        var state = phoneState()
+        state.automatic = false
+        menu.update(state)
+        let auto = menu.menu.items.first { $0.action == #selector(MenuBarController.changeAutomatic(_:)) }!
+        expect(auto.state == .off, "disabled automatic mode is unchecked")
+        menu.menu.performActionForItem(at: menu.menu.index(of: auto))
+        expect(control.automatic && control.shouldAutomaticallyEnable(state, now: now), "menu click resumes even from Settings Off")
     }
 
     test("Finder reopening the accessory agent routes to the regular settings window") {

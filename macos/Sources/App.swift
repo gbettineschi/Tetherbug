@@ -301,7 +301,7 @@ struct ContentView: View {
                     }
                 }
                 if let expiry = state?.automaticPausedUntil {
-                    Text("Paused until \(expiry.formatted(date: .omitted, time: .shortened)).")
+                    Text("Turned off until \(expiry.formatted(date: .omitted, time: .shortened)).")
                         .foregroundStyle(.secondary).font(.callout)
                 }
             }

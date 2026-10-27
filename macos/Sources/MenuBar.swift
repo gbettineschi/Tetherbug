@@ -7,6 +7,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private let hotspot = HotspotMenuView()
     private let hotspotItem = NSMenuItem()
     private let automaticItem = NSMenuItem()
+    private let durationItem = NSMenuItem()
     private let errorItem = NSMenuItem()
     private var state = AgentState()
     private var confirmedOn = false
@@ -14,13 +15,16 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private var phoneName: String?
     private let onToggle: () -> Void
     private let onAutomatic: (Bool) -> Void
+    private let onPauseAutomatic: (AutomaticPauseDuration) -> Void
     private let onSettings: () -> Void
     private let onQuit: () -> Void
 
     init(onToggle: @escaping () -> Void, onAutomatic: @escaping (Bool) -> Void,
+         onPauseAutomatic: @escaping (AutomaticPauseDuration) -> Void = { _ in },
          onSettings: @escaping () -> Void, onQuit: @escaping () -> Void) {
         self.onToggle = onToggle
         self.onAutomatic = onAutomatic
+        self.onPauseAutomatic = onPauseAutomatic
         self.onSettings = onSettings
         self.onQuit = onQuit
         super.init()
@@ -40,7 +44,22 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         automaticItem.target = self
         automaticItem.action = #selector(changeAutomatic(_:))
+        // AppKit collapses an empty state column; keep its space without drawing an Off mark.
+        if let checkmark = automaticItem.onStateImage {
+            automaticItem.offStateImage = NSImage(size: checkmark.size, flipped: false) { _ in true }
+        }
         menu.addItem(automaticItem)
+        durationItem.title = "Turn off automatic mode for…"
+        let durations = NSMenu()
+        durations.autoenablesItems = false
+        for duration in AutomaticPauseDuration.allCases {
+            let choice = NSMenuItem(title: duration.title, action: #selector(pauseAutomatic(_:)), keyEquivalent: "")
+            choice.target = self
+            choice.representedObject = duration.rawValue
+            durations.addItem(choice)
+        }
+        durationItem.submenu = durations
+        menu.addItem(durationItem)
         menu.addItem(.separator())
         menu.addItem(action("Settings…", #selector(openSettings(_:)), key: ","))
         menu.addItem(action("Quit Tetherbug", #selector(quit(_:)), key: "q"))
@@ -85,8 +104,11 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         }
         item.button?.appearsDisabled = false
         item.button?.setAccessibilityLabel("Tetherbug: \(description)")
-        var details = [description, state.automatic == true ? "Automatic mode on" : "Automatic mode off"]
-        if let expiry = state.automaticPausedUntil { details.append("Automatic mode paused until \(Self.time(expiry))") }
+        let automaticActive = state.automatic == true && !state.automaticSuspended
+        var details = [description, automaticActive ? "Automatic mode on" : "Automatic mode off"]
+        if state.automatic == true, let expiry = state.automaticPausedUntil {
+            details.append("Automatic mode turned off until \(Self.time(expiry))")
+        }
         if let error = state.requestError { details.append(error) }
         item.button?.toolTip = details.joined(separator: "\n")
 
@@ -100,11 +122,14 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         errorItem.toolTip = state.requestError
         errorItem.isHidden = state.requestError == nil
         automaticItem.title = "Automatic Mode"
-        automaticItem.state = state.automatic == true ? .on : .off
-        automaticItem.isEnabled = state.stopping != true
+        automaticItem.state = automaticActive ? .on : .off
+        let automaticAvailable = state.stopping != true
+        automaticItem.isEnabled = automaticAvailable
+        durationItem.isEnabled = automaticAvailable
+        durationItem.submenu?.items.forEach { $0.isEnabled = automaticAvailable }
         let title = NSMutableAttributedString(string: "Automatic Mode", attributes: [.font: NSFont.menuFont(ofSize: 0)])
         if state.automatic == true, let expiry = state.automaticPausedUntil {
-            title.append(NSAttributedString(string: "    Paused until \(Self.time(expiry))", attributes: [
+            title.append(NSAttributedString(string: "    Turned off until \(Self.time(expiry))", attributes: [
                 .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor
             ]))
         }
@@ -129,7 +154,13 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     @objc func changeAutomatic(_ sender: Any?) {
         guard state.stopping != true else { return }
-        onAutomatic(state.automatic != true)
+        onAutomatic(state.automatic != true || state.automaticSuspended)
+    }
+    @objc func pauseAutomatic(_ sender: NSMenuItem) {
+        guard state.stopping != true,
+              let raw = sender.representedObject as? String,
+              let duration = AutomaticPauseDuration(rawValue: raw) else { return }
+        onPauseAutomatic(duration)
     }
     @objc private func openSettings(_ sender: Any?) { onSettings() }
     @objc private func quit(_ sender: Any?) { onQuit() }

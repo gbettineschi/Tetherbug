@@ -63,7 +63,14 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         app.setActivationPolicy(.accessory)
         menuBar = MenuBarController(
             onToggle: { [weak self] in self?.toggleFromMenu() },
-            onAutomatic: { [weak self] on in self?.setAutomatic(on) },
+            onAutomatic: { [weak self] active in
+                self?.control.setAutomaticActive(active)
+                self?.automaticControlChanged()
+            },
+            onPauseAutomatic: { [weak self] duration in
+                self?.control.pauseAutomatic(for: duration)
+                self?.automaticControlChanged()
+            },
             onSettings: { [weak self] in self?.openSettings() },
             onQuit: { [weak self] in self?.quit() }
         )
@@ -175,6 +182,10 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     private func setAutomatic(_ on: Bool) {
         control.automatic = on
+        automaticControlChanged()
+    }
+
+    private func automaticControlChanged() {
         backoff = 2
         nextRetry = max(Date(), (offlineSince ?? Date()).addingTimeInterval(TimeInterval(Settings.disconnectWait)))
         tick()

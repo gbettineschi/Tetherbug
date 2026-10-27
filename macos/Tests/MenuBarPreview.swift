@@ -23,7 +23,7 @@ private final class Preview: NSObject, NSApplicationDelegate {
 
     override init() {
         defaults = UserDefaults(suiteName: suite)!
-        defaults.set(false, forKey: "onNoWifi")
+        defaults.set(true, forKey: "onNoWifi")
         control = HotspotControl(defaults: defaults)
         super.init()
         state.connected = true
@@ -33,7 +33,8 @@ private final class Preview: NSObject, NSApplicationDelegate {
         report(on: false)
         menu = MenuBarController(
             onToggle: { [weak self] in self?.toggle() },
-            onAutomatic: { [weak self] on in self?.control.automatic = on; self?.publish() },
+            onAutomatic: { [weak self] active in self?.control.setAutomaticActive(active); self?.publish() },
+            onPauseAutomatic: { [weak self] duration in self?.control.pauseAutomatic(for: duration); self?.publish() },
             onSettings: { print("PREVIEW Settings requested"); fflush(stdout) },
             onQuit: { NSApp.terminate(nil) }
         )
@@ -103,7 +104,7 @@ private final class Preview: NSObject, NSApplicationDelegate {
         state.requestPending = control.isPending
         state.requestError = control.error
         menu?.update(state)
-        label.stringValue = "Hotspot \(state.status?.hotspot.rawValue ?? "unknown") · Auto \(control.automatic ? "on" : "off") · \(control.pausedUntil != nil ? "paused for 15 minutes" : "not paused")"
+        label.stringValue = "Hotspot \(state.status?.hotspot.rawValue ?? "unknown") · Auto \(state.automatic != true ? "off" : state.automaticSuspended ? "suspended" : "on")"
         print("PREVIEW hotspot=\(state.status?.hotspot.rawValue ?? "unknown") auto=\(control.automatic) paused=\(control.pausedUntil != nil) pending=\(control.isPending)")
         fflush(stdout)
     }

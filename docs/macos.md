@@ -80,11 +80,14 @@ your phone, its hotspot state and battery.
 The existing background agent also displays a native hotspot icon. No extra helper is needed.
 
 - **Click or right-click:** open the native menu. Use the **Mobile Hotspot** switch to toggle the hotspot, or change **Automatic mode** in the menu.
-- With **Automatic mode** on, turning the hotspot off pauses activation for **15 minutes**. The pause appears beside Automatic mode. Turning the hotspot on manually cancels it; no separate Resume button is needed.
+- With **Automatic mode** on, turning the hotspot off pauses activation for **5 minutes**. Turning the hotspot on manually cancels the suspension.
+- Click **Automatic Mode** to turn it off with no deadline, or click it again to resume. The checkmark appears only while automatic activation is active. **Turn off automatic mode for…** offers 15 minutes, 30 minutes, 1 hour, 2 hours, 3 hours, Today (until the next local midnight), and Indefinitely. Each choice replaces the previous deadline rather than adding to it. Indefinitely disables automatic mode with no expiry, just like clicking Automatic Mode off.
+- A timed suspension shows **Turned off until…** beside Automatic Mode; mode switched off directly has no expiry label. Both menu entries remain available when automatic mode is off, including if disabled in Settings. Clicking Automatic Mode re-enables it; choosing a duration schedules it to resume at the new deadline.
 - The pause survives sleep and agent restart. After it expires, automatic activation still requires
   enabled but disconnected Mac Wi-Fi and the configured disconnect wait. Connected Wi-Fi is left alone.
 - The icon follows the phone's reported state. While awaiting confirmation, or if the phone/Shizuku
   is unavailable, clicking cannot issue another toggle. Errors appear in the menu and settings window.
+- The native checkmark column keeps its space while Automatic Mode is off, so toggling the checkmark does not shift the command labels.
 
 Keep **Launch at login** enabled to retain the menu when the settings window closes. Without
 it, the menu exists only while the window's session agent is running. Menu **Quit Tetherbug** exits
@@ -133,6 +136,6 @@ select an installed 26.x SDK using `SDKROOT` for both commands. This local build
 
 ## Cooldown after a nearby phone shutdown
 
-In Automatic mode, a fresh On-to-Off phone status report starts a 15-minute pause only while the Tetherbug Bluetooth connection remains active. Wi-Fi loss by itself does not create a cooldown. Disconnecting Bluetooth clears the status baseline, so an Off state first discovered after reconnection does not count as a nearby shutdown.
+In Automatic mode, a fresh On-to-Off phone status report starts a 5-minute pause only while the Tetherbug Bluetooth connection remains active. Wi-Fi loss by itself does not create a cooldown. Disconnecting Bluetooth clears the status baseline, so an Off state first discovered after reconnection does not count as a nearby shutdown. Automatic cooldowns do not shorten a longer user-selected suspension or re-enable mode that was switched off.
 
 The pause is saved across app restarts and shown beside Automatic mode. Turning Mobile Hotspot on manually from the Mac cancels it. Repeated Off reports do not restart the timer. Android's existing status reports do not identify whether shutdown was manual or Samsung's native idle timeout: both can satisfy the nearby-connected criterion. This is a proximity rule, not proof of a voluntary shutdown.
