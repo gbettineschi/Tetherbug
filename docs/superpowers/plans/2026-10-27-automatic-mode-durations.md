@@ -14,8 +14,8 @@
 - [x] Run Mac tests, review the diff independently, build and verify the local app.
 - [x] Back up the installed app/preferences, install the local trial and verify the helper and live status. Native menu actions/checkmarks/disabled state were verified by the AppKit test harness; visual acceptance of the installed dropdown is left to the user.
 - [x] User tested the local builds and approved shipping after restoring Indefinitely.
-- [ ] Merge/push the verified source, publish 0.1.8 through the existing tag workflow, verify assets and automatic tap update.
-- [ ] Install the published Mac release through Homebrew and verify the login helper and phone connection.
+- [x] Merge/push the verified source, publish 0.1.8 through the existing tag workflow, verify assets and automatic tap update.
+- [x] Install the published Mac release through Homebrew and verify the login helper and phone connection.
 
 ## Local trial verification (2026-10-27)
 
@@ -56,6 +56,19 @@ User requested that command labels keep the same margin when the Auto checkmark 
 - During registration the helper initially failed the OS signing launch constraint and the fallback reported Bluetooth unknown. TCC logs specifically showed a Bluetooth code-requirement mismatch and a new prompt. After Bluetooth became available, unregister/register restored the real login helper (PID 19549, parent 1, first run, no prior exit). These observations do not establish that TCC was the sole cause of the launch-constraint failure. No quarantine removal or global security change was used.
 - After Settings closed, helper remains connected to the S23 with Shizuku controllable and no pending request. Visual acceptance of the installed dropdown is left to the user.
 - No push, merge, tag, release, Homebrew update or Android change. Publication still waits for the user's OK.
+
+## Approved final release: 0.1.8
+
+The user approved shipping with Indefinitely restored. It uses the existing mode Off setting, exactly like a plain Automatic Mode click, with no expiry. The seven submenu choices are present; the stable checkmark gutter and five-minute automatic cooldowns remain.
+
+- Release source/tag: `2fc7484f973ca72ac46a61cc0d2d813f230feaa2` / `v0.1.8`. The branch was fast-forwarded into main and pushed. Final local verification passed 53 native Mac tests and 3 release-source guard tests; independent whole-branch review found no blocking issue.
+- GitHub CI `40592251711` (Mac/Android), lint `40592251604`, and release `40592258196` all passed. The tag workflow built/signed both packages and automatically published the shared tap.
+- All four GitHub Release assets were downloaded and verified against their API SHA-256 digests and the checksum file; the manifest points to the exact source above. The APK certificate remains `66e308329c2e4813943e4cc1c9672831fb8897e3d65ac5d1ef252a90ce7a9be6`. Android code108 is a metadata-only update.
+- Mac ZIP SHA-256: `364f0428525d481334590f741e1fad23e98066837fcfcebbe0c5e5b6ea4a3e6b`; APK SHA-256: `6540814e5d8e6def02db256fc14ff6be2a2813e1d87d677be91a1c1706fff6f5`.
+- Homebrew upgraded `gbettineschi/tap/tetherbug-personal` from 0.1.7 to 0.1.8. Receipt and app both report 0.1.8; the installed universal binary matches the released ZIP and strict signature verification passes.
+- After a Finder relaunch and login-item re-registration, the real launchd helper runs (PID 25131, parent 1, first run, no prior exit). It remains connected to the S23 with Shizuku controllable and no pending command after Settings closes.
+- The pre-upgrade app/preferences are privately backed up under ignored `build/deployment-backups/0.1.8/`. Automatic-mode setting, existing pause deadline, paired identity, disconnect wait and debug-notification preference were all verified unchanged. No phone APK installation, security exception or quarantine removal was performed.
+- Detailed local deployment receipt: ignored `build/releases/0.1.8/deployment-verification.json`.
 
 ## Review focus
 
