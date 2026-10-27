@@ -7,6 +7,7 @@ final class HotspotControl {
     private var lastAutomatic: Bool
     private var pending: (on: Bool, sentAt: Date)?
     private var writeStarted: Date?
+    private var hotspotWasOn = false
     private(set) var needsReconnect = false
     private(set) var error: String?
 
@@ -73,6 +74,16 @@ final class HotspotControl {
             resume() // a change made from the settings window
         }
         if let pausedUntil, pausedUntil <= now { resume() }
+        if !state.connected { hotspotWasOn = false }
+        if state.connected, receivedStatus, let status = state.status {
+            switch status.hotspot {
+            case .on: hotspotWasOn = true
+            case .off:
+                if hotspotWasOn { pauseAutomatic(now: now) }
+                hotspotWasOn = false
+            case .starting, .failed: break
+            }
+        }
         if !state.connected {
             if isPending { commandFailed("Phone disconnected before confirming the change.") }
             writeStarted = nil
@@ -98,6 +109,11 @@ final class HotspotControl {
     }
 
     func resume() { pausedUntil = nil }
+
+    private func pauseAutomatic(now: Date) {
+        guard automatic else { return }
+        pausedUntil = max(pausedUntil ?? .distantPast, now.addingTimeInterval(15 * 60))
+    }
 
     /// At most one unresolved transport write exists. A state notification can arrive before
     /// this callback; retain write ownership until both have been accounted for.

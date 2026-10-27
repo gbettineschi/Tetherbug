@@ -130,3 +130,9 @@ on an actual Android device.
 If a Command Line Tools installation reports a missing `SwiftUIMacros` plugin with the macOS 27 SDK,
 select an installed 26.x SDK using `SDKROOT` for both commands. This local build was verified with
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and the macOS 14 deployment target.
+
+## Cooldown after a nearby phone shutdown
+
+In Automatic mode, a fresh On-to-Off phone status report starts a 15-minute pause only while the Tetherbug Bluetooth connection remains active. Wi-Fi loss by itself does not create a cooldown. Disconnecting Bluetooth clears the status baseline, so an Off state first discovered after reconnection does not count as a nearby shutdown.
+
+The pause is saved across app restarts and shown beside Automatic mode. Turning Mobile Hotspot on manually from the Mac cancels it. Repeated Off reports do not restart the timer. Android's existing status reports do not identify whether shutdown was manual or Samsung's native idle timeout: both can satisfy the nearby-connected criterion. This is a proximity rule, not proof of a voluntary shutdown.

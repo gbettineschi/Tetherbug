@@ -212,6 +212,56 @@ test("an unresolved transport timeout requires reconnect before another write") 
     expect(control.toggle(phoneState(.off), now: now.addingTimeInterval(18)) == true, "fresh connection permits a new request")
 }
 
+test("phone-side hotspot shutdown pauses automatic activation for 15 minutes") {
+    let (control, defaults) = environment()
+    control.refresh(phoneState(.on), now: now, receivedStatus: true)
+    control.refresh(phoneState(.off), now: now.addingTimeInterval(10), receivedStatus: true)
+    expect(control.pausedUntil == now.addingTimeInterval(910), "phone Off starts a new 900-second cooldown")
+    let restarted = HotspotControl(defaults: defaults)
+    expect(!restarted.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(909)), "restart cannot bypass the cooldown")
+    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(910)), "automatic activation resumes at the deadline")
+}
+
+test("repeated Off reports do not continually postpone the cooldown") {
+    let (control, _) = environment()
+    control.refresh(phoneState(.on), now: now, receivedStatus: true)
+    control.refresh(phoneState(.off), now: now.addingTimeInterval(10), receivedStatus: true)
+    control.refresh(phoneState(.off), now: now.addingTimeInterval(100), receivedStatus: true)
+    control.refresh(phoneState(.off), now: now.addingTimeInterval(909))
+    expect(control.pausedUntil == now.addingTimeInterval(910), "only the transition into Off starts the pause")
+    expect(control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(910)), "periodic snapshots cannot postpone reactivation")
+}
+
+test("a phone Off report after Bluetooth recovery does not create a cooldown") {
+    let (control, _) = environment()
+    control.refresh(phoneState(.on), now: now, receivedStatus: true)
+    var disconnected = AgentState()
+    disconnected.bluetooth = "on"
+    control.refresh(disconnected, now: now.addingTimeInterval(5))
+    expect(control.pausedUntil == nil, "Bluetooth loss by itself is not hotspot loss")
+    control.refresh(phoneState(.off), now: now.addingTimeInterval(10), receivedStatus: true)
+    expect(control.pausedUntil == nil, "a state first discovered after reconnection is not a nearby shutdown event")
+    expect(control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(11)), "moving away and returning retains normal automatic activation")
+}
+
+test("first Off report and manual-mode shutdown do not create a cooldown") {
+    let (control, _) = environment()
+    control.refresh(phoneState(.off), now: now, receivedStatus: true)
+    expect(control.pausedUntil == nil, "launching with the hotspot off retains normal Auto behavior")
+    let (manual, _) = environment(automatic: false)
+    manual.refresh(phoneState(.on), now: now, receivedStatus: true)
+    manual.refresh(phoneState(.off), now: now.addingTimeInterval(1), receivedStatus: true)
+    expect(manual.pausedUntil == nil, "manual mode is unchanged")
+}
+
+test("manual On cancels a phone-side shutdown cooldown") {
+    let (control, _) = environment()
+    control.refresh(phoneState(.on), now: now, receivedStatus: true)
+    control.refresh(phoneState(.off), now: now.addingTimeInterval(1), receivedStatus: true)
+    expect(control.toggle(phoneState(.off), now: now.addingTimeInterval(2)) == true, "explicit On is available during cooldown")
+    expect(control.pausedUntil == nil, "explicit On clears the persisted pause")
+}
+
 runMenuBarTests()
 runBluetoothRecoveryTests()
 for suite in suites { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
