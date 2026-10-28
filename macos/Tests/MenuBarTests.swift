@@ -8,7 +8,7 @@ func runMenuBarTests() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.accessory)
 
-    test("native command layout reserves the same space with and without the Auto checkmark") {
+    test("native command menu width stays stable when the Auto checkmark changes") {
         let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onSettings: {}, onQuit: {})
         // Measure command rows without the wide custom header masking native gutter changes.
         menu.menu.removeItem(at: 0)
@@ -25,7 +25,7 @@ func runMenuBarTests() {
         state.automatic = false
         menu.update(state)
         menu.menu.update()
-        expect(offWidth == onWidth, "adding the native checkmark must not add a column or move the labels")
+        expect(offWidth == onWidth, "adding the checkmark must not change the measured menu width")
         expect(menu.menu.size.width == onWidth, "removing the checkmark must preserve the reserved space")
     }
 

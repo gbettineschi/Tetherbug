@@ -44,9 +44,19 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         automaticItem.target = self
         automaticItem.action = #selector(changeAutomatic(_:))
-        // AppKit collapses an empty state column; keep its space without drawing an Off mark.
-        if let checkmark = automaticItem.onStateImage {
-            automaticItem.offStateImage = NSImage(size: checkmark.size, flipped: false) { _ in true }
+        // Use the same AppKit image layout for both states. The implicit system checkmark
+        // otherwise has different metrics from an explicit off-state image on recent macOS.
+        if let checkmark = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)) {
+            let on = NSImage(size: checkmark.size, flipped: false) { frame in
+                checkmark.draw(in: frame)
+                return true
+            }
+            let off = NSImage(size: checkmark.size, flipped: false) { _ in true }
+            on.isTemplate = true
+            off.isTemplate = true
+            automaticItem.onStateImage = on
+            automaticItem.offStateImage = off
         }
         menu.addItem(automaticItem)
         durationItem.title = "Turn off automatic mode for…"

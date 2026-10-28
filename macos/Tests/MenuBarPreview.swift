@@ -23,7 +23,7 @@ private final class Preview: NSObject, NSApplicationDelegate {
 
     override init() {
         defaults = UserDefaults(suiteName: suite)!
-        defaults.set(true, forKey: "onNoWifi")
+        defaults.set(ProcessInfo.processInfo.environment["TETHERBUG_PREVIEW_AUTOMATIC"] != "off", forKey: "onNoWifi")
         control = HotspotControl(defaults: defaults)
         super.init()
         state.connected = true
