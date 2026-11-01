@@ -15,7 +15,7 @@ func scheduleAgentMaintenance(_ tick: @escaping () -> Void) -> Timer {
 
 /// Background agent: keeps the Bluetooth LE link to the phone, decides when to ask for the hotspot,
 /// and serves its state over a local socket to the app and the CLI.
-final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+final class Agent: NSObject {
     private var central: CBCentralManager!
     private var phone: CBPeripheral?
     private var command: CBCharacteristic?
@@ -27,11 +27,14 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private var outstandingWrite: CBCharacteristic?
     private var reconnectRequested = false
     private var recovery = BluetoothRecovery(preferred: Settings.preferredPhone)
-    private var wakeObserver: NSObjectProtocol?
+    private let activity: PowerActivity
+    private var powerMonitor: SystemPowerMonitor?
+    private var bluetoothCallbacks: BluetoothCallbacks?
+    private var maintenance: Timer?
     private var nextReadinessCheck = Date.distantPast
     private let control = HotspotControl()
     private var menuBar: MenuBarController?
-    private let wifi = NWPathMonitor(requiredInterfaceType: .wifi)
+    private var wifi: NWPathMonitor?
     private let scanQueue = DispatchQueue(label: "ie.xav.tetherbug.scan")
     private var offlineSince: Date?
     private var backoff: TimeInterval = 2
@@ -44,6 +47,12 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 menuBar?.update(state)
             }
         }
+    }
+
+    init(capabilities: @escaping () -> UInt32? = SystemPowerMonitor.capabilities) {
+        activity = PowerActivity(capabilities: capabilities)
+        super.init()
+        activity.update(.startup)
     }
 
     func run() {
@@ -76,25 +85,20 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         )
         app.delegate = menuBar
         publishControl()
-        central = CBCentralManager(delegate: self, queue: .main)
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.clearPhoneConnection()
-            self?.recovery.restart()
-            self?.maintainConnection()
+        let monitor = SystemPowerMonitor { [weak self] in self?.powerChanged($0) }
+        powerMonitor = monitor
+        if monitor.start() { powerChanged(.startup) }
+        else {
+            activity.update(.willSleep) // no reliable sleep notifications: fail closed
+            log("power monitoring unavailable; radio disabled")
         }
-        wifi.pathUpdateHandler = { [weak self] path in DispatchQueue.main.async { self?.wifiChanged(path) } }
-        wifi.start(queue: .main)
-        // Re-evaluate retries even when nothing else changes.
-        scheduleAgentMaintenance { [weak self] in self?.tick() }
         note("agent started; socket at \(Socket.path)")
         app.run()
     }
 
     // MARK: Socket requests
 
-    private func handle(_ line: String) -> AgentState? {
+    func handle(_ line: String) -> AgentState? {
         switch line {
         case "enable": request(true, reason: "manual")
         case "disable": request(false, reason: "manual")
@@ -112,6 +116,68 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     // MARK: Wi-Fi trigger
+
+    private func powerChanged(_ event: PowerActivity.Event) {
+        activity.update(event)
+        if activity.active, state.stopping != true {
+            if central == nil { resumeRadio() }
+        } else { suspendRadio() }
+    }
+
+    /// Called on the main queue at every radio entry point, including delegate callbacks.
+    private func radioAllowed(_ token: UInt64? = nil) -> Bool {
+        guard state.stopping != true else { return false }
+        let generation = activity.generation
+        guard token == nil || token == generation else { return false }
+        guard activity.allows(generation) else {
+            powerChanged(.capabilitiesChanged)
+            return false
+        }
+        return true
+    }
+
+    private func resumeRadio() {
+        let token = activity.generation
+        recovery.restart()
+        offlineSince = nil
+        state.wifiOffline = false
+        backoff = 2
+        nextRetry = .distantPast
+        nextReadinessCheck = .distantPast
+        let callbacks = BluetoothCallbacks(agent: self) { [weak self] in self?.radioAllowed(token) == true }
+        bluetoothCallbacks = callbacks
+        central = CBCentralManager(delegate: callbacks, queue: .main)
+        let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+        wifi = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self, self.radioAllowed(token) else { return }
+            self.wifiChanged(path)
+        }
+        monitor.start(queue: .main)
+        maintenance = scheduleAgentMaintenance { [weak self] in
+            guard let self, self.radioAllowed(token) else { return }
+            self.tick()
+        }
+        log("radio resumed for FullWake (generation \(token))")
+    }
+
+    private func suspendRadio() {
+        maintenance?.invalidate()
+        maintenance = nil
+        pendingFullScan?.cancel()
+        pendingFullScan = nil
+        wifi?.cancel()
+        wifi = nil
+        let hadRadio = central != nil
+        central?.delegate = nil
+        clearPhoneConnection()
+        central = nil
+        bluetoothCallbacks = nil
+        offlineSince = nil
+        state.wifiOffline = false
+        state.bluetooth = "suspended"
+        if hadRadio { log("radio suspended for sleep/DarkWake") }
+    }
 
     private func wifiChanged(_ path: NWPath) {
         let poweredOn = CWWiFiClient.shared().interface()?.powerOn() ?? false
@@ -131,7 +197,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func tick() {
-        guard state.stopping != true else { return }
+        guard radioAllowed() else { return }
         maintainConnection()
         // Shizuku can recover without an AP/battery notification from Android. Read its current
         // readiness while unavailable, rather than leaving an old "not ready" snapshot forever.
@@ -157,6 +223,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func request(_ on: Bool, reason: String) {
+        guard radioAllowed() else { return }
         state.lastRequest = "\(on ? "enable" : "disable") (\(reason)) at \(ISO8601DateFormatter().string(from: Date()))"
         guard let phone, let command else {
             note("\(on ? "enable" : "disable") requested (\(reason)) but the phone isn't connected")
@@ -171,6 +238,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func toggleFromMenu() {
+        guard radioAllowed() else { return }
         guard let phone, let command, let on = control.toggle(state) else { return }
         state.lastRequest = "\(on ? "enable" : "disable") (menu) at \(ISO8601DateFormatter().string(from: Date()))"
         // Publish the pause before issuing Off, so no retry can immediately turn it back on.
@@ -186,6 +254,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func automaticControlChanged() {
+        publishControl()
         backoff = 2
         nextRetry = max(Date(), (offlineSince ?? Date()).addingTimeInterval(TimeInterval(Settings.disconnectWait)))
         tick()
@@ -217,6 +286,9 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private func quit() {
         guard state.stopping != true else { return }
         state.stopping = true
+        activity.update(.willSleep)
+        suspendRadio()
+        powerMonitor?.stop()
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: "ie.xav.tetherbug")
             where app.processIdentifier != getpid() && app.activationPolicy == .regular {
             app.terminate()
@@ -228,7 +300,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     // MARK: Bluetooth
 
     private func maintainConnection() {
-        guard state.stopping != true else { return }
+        guard radioAllowed(), let central else { return }
         switch recovery.due(poweredOn: central.state == .poweredOn) {
         case .discover:
             let known = central.retrieveConnectedPeripherals(withServices: [Gatt.service])
@@ -259,8 +331,8 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         state.status = nil
         control.refresh(state)
         publishControl()
-        central.stopScan()
-        if let old, old.state != .disconnected { central.cancelPeripheralConnection(old) }
+        central?.stopScan()
+        if let old, old.state != .disconnected { central?.cancelPeripheralConnection(old) }
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
@@ -281,7 +353,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private func connect(_ peripheral: CBPeripheral) {
         guard recovery.beginConnection(to: peripheral.identifier) else { return }
         phone = peripheral
-        peripheral.delegate = self
+        peripheral.delegate = bluetoothCallbacks
         state.phone = peripheral.name
         central.connect(peripheral)
     }
@@ -358,7 +430,7 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == Gatt.command, characteristic === outstandingWrite else { return }
+        guard phone === peripheral, characteristic.uuid == Gatt.command, characteristic === outstandingWrite else { return }
         outstandingWrite = nil
         control.writeCompleted(error: error?.localizedDescription)
         publishControl()
@@ -370,47 +442,72 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     /// be broadcasting yet), for up to 10 s; CoreWiFi results carry names, so match its SSID as well
     /// as the Personal Hotspot flag. Otherwise fall back to full scans.
     private func refreshWifiScan(_ status: PhoneStatus) {
+        guard radioAllowed() else { return }
+        let token = activity.generation
         pendingFullScan?.cancel()
-        guard let scanner = ChannelScanner.shared else { return fullWifiScan() }
+        guard let scanner = ChannelScanner.shared else { return fullWifiScan(token: token) }
         guard let channel = scanner.channel(frequency: status.frequency) else {
             // The phone reports "on" just before Android tells it the frequency; a full scan started
             // now would hold up the channel scan behind it, so give the frequency a moment.
-            let fallback = DispatchWorkItem { [weak self] in self?.fullWifiScan() }
+            let fallback = DispatchWorkItem { [weak self] in
+                guard let self, self.radioAllowed(token) else { return }
+                self.fullWifiScan(token: token)
+            }
             pendingFullScan = fallback
             DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: fallback)
             return
         }
         note("scanning for the hotspot on \(status.frequency) MHz")
+        let activity = self.activity
         scanQueue.async { [weak self] in
             let start = Date()
             var seen = false
             repeat {
+                guard activity.allows(token) else { return }
                 guard let networks = scanner.scan(channel) else {
-                    DispatchQueue.main.async { self?.note("channel scan failed"); self?.fullWifiScan() }
+                    DispatchQueue.main.async {
+                        guard let self, self.radioAllowed(token) else { return }
+                        self.note("channel scan failed")
+                        self.fullWifiScan(token: token)
+                    }
                     return
                 }
+                guard activity.allows(token) else { return }
                 seen = networks.contains { isPersonalHotspot($0) || (!status.ssid.isEmpty && networkName($0) == status.ssid) }
                 if !seen { Thread.sleep(forTimeInterval: 0.25) }
             } while !seen && Date().timeIntervalSince(start) < 10
             let elapsed = String(format: "%.1f", Date().timeIntervalSince(start))
-            DispatchQueue.main.async { self?.note("hotspot \(seen ? "seen" : "not seen") after \(elapsed) s") }
+            let result = seen
+            DispatchQueue.main.async {
+                guard let self, self.radioAllowed(token) else { return }
+                self.note("hotspot \(result ? "seen" : "not seen") after \(elapsed) s")
+            }
         }
     }
 
     /// A full scan sweeps every channel (~12 s), and airportd gives a process at most one per 10 s
     /// (counted from the end of the last), so the one retry waits that long. It can only match the
     /// Personal Hotspot flag: macOS hides network names here without Location access.
-    private func fullWifiScan(attempt: Int = 1) {
+    private func fullWifiScan(attempt: Int = 1, token: UInt64) {
+        guard radioAllowed(token) else { return }
         note("scanning for the hotspot (attempt \(attempt))")
-        DispatchQueue.global().async { [weak self] in
+        let activity = self.activity
+        scanQueue.async { [weak self] in
+            guard activity.allows(token) else { return }
+            // CoreWLAN cannot cancel a synchronous scan already handed to macOS. Do not wait
+            // for it during sleep; discard its result and forbid subsequent work instead.
             let networks = (try? CWWiFiClient.shared().interface()?.scanForNetworks(withName: nil)) ?? []
+            guard activity.allows(token) else { return }
             let found = networks.contains(where: isPersonalHotspot)
             DispatchQueue.main.async {
-                guard !found, attempt < 2 else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-                    guard let self, self.state.status?.hotspot == .on else { return }
-                    self.fullWifiScan(attempt: attempt + 1)
+                guard let self, self.radioAllowed(token), !found, attempt < 2 else { return }
+                let retry = DispatchWorkItem { [weak self] in
+                    guard let self, self.radioAllowed(token), self.state.status?.hotspot == .on else { return }
+                    self.fullWifiScan(attempt: attempt + 1, token: token)
                 }
+                self.pendingFullScan?.cancel()
+                self.pendingFullScan = retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: retry)
             }
         }
     }
@@ -420,8 +517,10 @@ final class Agent: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         log(message)
         guard Settings.debugNotifications else { return }
         let center = UNUserNotificationCenter.current()
+        let token = activity.generation
+        let activity = self.activity
         center.requestAuthorization(options: [.alert]) { granted, _ in
-            guard granted else { return }
+            guard granted, activity.allows(token) else { return }
             let content = UNMutableNotificationContent()
             content.title = "Tetherbug"
             content.body = message
