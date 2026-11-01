@@ -25,6 +25,16 @@ func runPowerActivityTests() {
         activity.update(.capabilitiesChanged)
         expect(!activity.active && !activity.allows(token), "stale FullWake sample cannot reopen sleep latch")
     }
+    test("a late Workspace wake cannot reopen the pre-sleep latch") {
+        let activity = PowerActivity(capabilities: { 0x1f })
+        activity.update(.startup)
+        let token = activity.generation
+        activity.update(.willSleep)
+        activity.update(.workspaceWake)
+        expect(!activity.active && !activity.allows(token), "independent Workspace event cannot override IOKit sleep")
+        activity.update(.didWake)
+        expect(activity.active && activity.allows(activity.generation), "IOKit completed FullWake resumes")
+    }
     test("DarkWake does not reconnect; FullWake starts a fresh generation") {
         var caps: UInt32? = 0x1f
         let activity = PowerActivity(capabilities: { caps })

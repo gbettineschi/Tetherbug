@@ -53,7 +53,7 @@ final class SystemPowerMonitor {
         capabilitiesStore = store
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.onEvent(.didWake) }
+        ) { [weak self] _ in self?.onEvent(.workspaceWake) }
         return true
     }
 

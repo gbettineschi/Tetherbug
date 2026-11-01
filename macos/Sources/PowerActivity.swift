@@ -2,7 +2,7 @@ import Foundation
 
 /// An awake generation owns every radio operation; sleep invalidates that ownership.
 final class PowerActivity {
-    enum Event { case startup, willSleep, didWake, capabilitiesChanged }
+    enum Event { case startup, willSleep, didWake, workspaceWake, capabilitiesChanged }
     private let lock = NSLock()
     private var epoch: UInt64 = 0
     private var running = false
@@ -21,6 +21,8 @@ final class PowerActivity {
     func update(_ event: Event) {
         lock.withLock {
             if event == .willSleep { sleeping = true }
+            // Only the ordered IOKit completion may clear the pre-sleep latch. Workspace
+            // notifications can arrive late and are only an extra capability recheck.
             if event == .didWake { sleeping = false }
             let next = !sleeping && Self.isFullWake(capabilities())
             if next != running { epoch &+= 1; running = next }
