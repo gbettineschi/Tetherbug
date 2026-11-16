@@ -62,10 +62,15 @@ final class AgentModel: ObservableObject {
             DispatchQueue.main.async { self.notificationsAllowed = allowed }
         }
     }
-    @Published var loginItem = SMAppService.agent(plistName: "ie.xav.tetherbug.agent.plist").status
+    @Published private(set) var loginItem: SMAppService.Status
     @Published var loginError: String?
+    @Published private(set) var loginServiceUnavailable = false
 
-    private let agent = SMAppService.agent(plistName: "ie.xav.tetherbug.agent.plist")
+    private let agent = SMAppService.agent(plistName: loginAgentLabel + ".plist")
+    private let loginServiceStatus: () -> SMAppService.Status
+    private let startLoginService: () throws -> Void
+    private let uptime: () -> TimeInterval
+    private var loginStartDeadline: TimeInterval?
 
     init(defaults: UserDefaults = Settings.defaults,
          watch: @escaping (@escaping (AgentState) -> Bool) -> Bool = { SocketClient.request("watch", onState: $0) },
@@ -83,10 +88,27 @@ final class AgentModel: ObservableObject {
                  return false
              }
              return reached && acknowledged
-         }) {
+         },
+         loginServiceStatus: @escaping () -> SMAppService.Status = {
+             SMAppService.agent(plistName: loginAgentLabel + ".plist").status
+         },
+         startLoginService: @escaping () throws -> Void = {
+             let process = Process()
+             process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+             process.arguments = ["kickstart", "gui/\(getuid())/\(loginAgentLabel)"]
+             process.terminationHandler = { child in
+                 if child.terminationStatus != 0 { log("login agent start returned \(child.terminationStatus)") }
+             }
+             try process.run()
+         },
+         uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.defaults = defaults
         self.launchAgent = launchAgent
         self.request = request
+        self.loginServiceStatus = loginServiceStatus
+        self.startLoginService = startLoginService
+        self.uptime = uptime
+        self.loginItem = loginServiceStatus()
         onNoWifi = defaults.object(forKey: "onNoWifi") as? Bool ?? true
         let observation = self.observation
         Thread.detachNewThread { [weak self] in
@@ -100,7 +122,7 @@ final class AgentModel: ObservableObject {
                     DispatchQueue.main.async {
                         guard self?.agentStopping != true else { return }
                         self?.state = nil
-                        self?.startSessionAgent()
+                        self?.recoverAgent()
                     }
                 }
                 Thread.sleep(forTimeInterval: 1)
@@ -114,6 +136,7 @@ final class AgentModel: ObservableObject {
             NSApp.terminate(nil)
             return
         }
+        clearLoginStartAttempt()
         self.state = state
         if let automatic = state.automatic, automatic != onNoWifi {
             updatingFromAgent = true
@@ -174,6 +197,44 @@ final class AgentModel: ObservableObject {
     /// process; the agent's lifetime lock arbitrates a race with a launchd start.
     private var sessionAgent: Process?
 
+    private func recoverAgent() {
+        guard !agentStopping else { return }
+        refreshLoginServiceStatus()
+        guard loginItem == .enabled else {
+            startSessionAgent()
+            return
+        }
+        if let deadline = loginStartDeadline {
+            if uptime() >= deadline && !loginServiceUnavailable { loginServiceUnavailable = true }
+            return
+        }
+        loginStartDeadline = uptime() + 8
+        do {
+            try startLoginService()
+        } catch {
+            loginServiceUnavailable = true
+            log("couldn't start the login agent: \(error.localizedDescription)")
+        }
+    }
+
+    func retryLoginService() {
+        guard state == nil else { return }
+        clearLoginStartAttempt()
+        recoverAgent()
+    }
+
+    func refreshLoginServiceStatus() {
+        let status = loginServiceStatus()
+        guard status != loginItem else { return }
+        loginItem = status
+        clearLoginStartAttempt()
+    }
+
+    private func clearLoginStartAttempt() {
+        loginStartDeadline = nil
+        if loginServiceUnavailable { loginServiceUnavailable = false }
+    }
+
     private func startSessionAgent() {
         guard !agentStopping, sessionAgent?.isRunning != true else { return }
         do {
@@ -192,6 +253,7 @@ final class AgentModel: ObservableObject {
 
     func setLoginItem(_ on: Bool) {
         loginError = nil
+        clearLoginStartAttempt()
         do {
             if on {
                 stopSessionAgent()
@@ -203,7 +265,7 @@ final class AgentModel: ObservableObject {
             loginError = error.localizedDescription
             log("login item: \(error.localizedDescription)")
         }
-        loginItem = agent.status
+        refreshLoginServiceStatus()
         // macOS asks the user to allow new background items in System Settings first.
         if loginItem == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
     }
@@ -319,6 +381,10 @@ struct ContentView: View {
                     Button("Allow Tetherbug in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                 }
                 if let error = model.loginError { Text(error).foregroundStyle(.red).font(.callout) }
+                if model.loginServiceUnavailable {
+                    Text("Tetherbug’s background service didn’t start.").foregroundStyle(.secondary)
+                    Button("Retry Background Service") { model.retryLoginService() }
+                }
                 Text("Closing this window keeps Tetherbug in the menu bar. Choose Quit Tetherbug to stop it.")
                     .foregroundStyle(.secondary).font(.callout)
             }
@@ -396,6 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         window?.deminiaturize(nil)
+        model.refreshLoginServiceStatus()
         model.checkNotifications()
         if bluetooth == nil, CBManager.authorization == .notDetermined {
             bluetooth = CBCentralManager(delegate: nil, queue: nil)

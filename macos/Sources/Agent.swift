@@ -24,6 +24,8 @@ final class Agent: NSObject {
     private var password: String? // kept in memory only
     private var server: SocketServer!
     private var agentLock: AgentLock?
+    private let isLoginAgent = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == loginAgentLabel
+    private var exiting = false
     private var outstandingWrite: CBCharacteristic?
     private var reconnectRequested = false
     private var recovery = BluetoothRecovery(preferred: Settings.preferredPhone)
@@ -56,7 +58,17 @@ final class Agent: NSObject {
     }
 
     func run() {
-        guard let lease = AgentLock(path: Socket.path + ".lock") else {
+        // A login service can take over from a session worker left behind after Settings closed.
+        // It must own the lock before binding the socket or starting Bluetooth.
+        let handover: (() -> Bool)? = isLoginAgent && activity.active ? {
+            var accepted = false
+            SocketClient.request("handover") { reply in
+                accepted = reply.stopping == true
+                return false
+            }
+            return accepted
+        } : nil
+        guard let lease = AgentLock.acquire(path: Socket.path + ".lock", handover: handover) else {
             note("cannot acquire the agent lock; another agent may be running")
             return
         }
@@ -106,6 +118,13 @@ final class Agent: NSObject {
         case "automatic on": setAutomatic(true)
         case "automatic off": setAutomatic(false)
         case "quit": quit()
+        case "handover":
+            guard !isLoginAgent, state.managedBy == nil, !exiting else { return state }
+            quit(closeSettings: false)
+            // Acknowledge only to the successor. The Settings watcher must stay open to reconnect.
+            var reply = state
+            reply.stopping = true
+            return reply
         case "password":
             var reply = state
             reply.password = password
@@ -283,15 +302,18 @@ final class Agent: NSObject {
         }
     }
 
-    private func quit() {
-        guard state.stopping != true else { return }
-        state.stopping = true
+    private func quit(closeSettings: Bool = true) {
+        guard !exiting else { return }
+        exiting = true
+        if closeSettings { state.stopping = true }
         activity.update(.willSleep)
         suspendRadio()
         powerMonitor?.stop()
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: "ie.xav.tetherbug")
-            where app.processIdentifier != getpid() && app.activationPolicy == .regular {
-            app.terminate()
+        if closeSettings {
+            for app in NSRunningApplication.runningApplications(withBundleIdentifier: "ie.xav.tetherbug")
+                where app.processIdentifier != getpid() && app.activationPolicy == .regular {
+                app.terminate()
+            }
         }
         // Let the settings watcher receive `stopping` before the socket closes.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { NSApp.terminate(nil) }

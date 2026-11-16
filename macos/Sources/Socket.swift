@@ -13,6 +13,18 @@ final class AgentLock {
     }
 
     deinit { close(descriptor) }
+
+    static func acquire(path: String, handover: (() -> Bool)? = nil) -> AgentLock? {
+        if let lease = AgentLock(path: path) { return lease }
+        // An acknowledged handover stops the old worker before it releases the lock.
+        guard handover?() == true else { return nil }
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        repeat {
+            if let lease = AgentLock(path: path) { return lease }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return nil
+    }
 }
 
 /// Line-based Unix socket: a client sends one request (`status`, `enable`, `disable`, `watch`) and

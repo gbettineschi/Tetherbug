@@ -298,7 +298,7 @@ func runMenuBarTests() {
         finish.signal()
     }
 
-    test("opening settings restores a missing helper even when login registration is enabled") {
+    test("opening settings starts a session helper when launch at login is off") {
         var launches = 0
         var child: Process?
         let model = AgentModel(watch: { _ in false }, launchAgent: {
@@ -310,15 +310,83 @@ func runMenuBarTests() {
             child = process
             return process
         })
-        model.loginItem = .enabled
         defer { model.closeSettings(); child?.terminate(); child?.waitUntilExit() }
         let deadline = Date().addingTimeInterval(2)
         while launches == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-        expect(launches == 1, "enabled registration cannot suppress missing-helper recovery")
+        expect(launches == 1, "manual launch starts the helper with launch at login off")
         RunLoop.main.run(until: Date().addingTimeInterval(1.1))
         expect(launches == 1, "a live helper is not launched twice")
         model.closeSettings()
         expect(child?.isRunning == true, "closing settings keeps the menu-bar helper alive")
+    }
+
+    test("the login service takes the lease only after a session worker releases it") {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var oldWorker = AgentLock(path: file.path)
+        expect(oldWorker != nil, "session worker obtained the original lease")
+        var requests = 0
+        let declined = AgentLock.acquire(path: file.path, handover: { requests += 1; return false })
+        expect(declined == nil, "another managed worker can refuse the handover")
+        let newWorker = AgentLock.acquire(path: file.path, handover: {
+            requests += 1
+            oldWorker = nil
+            return true
+        })
+        expect(newWorker != nil && requests == 2, "registered worker inherits a released lease")
+        withExtendedLifetime(newWorker) {
+            expect(AgentLock(path: file.path) == nil, "the successor exclusively owns the lease")
+        }
+    }
+
+    test("enabled login service is started through macOS and never falls back automatically") {
+        var managedStarts = 0
+        var sessionStarts = 0
+        var uptime: TimeInterval = 10
+        let model = AgentModel(watch: { _ in false }, launchAgent: {
+            sessionStarts += 1
+            return Process()
+        }, loginServiceStatus: { .enabled }, startLoginService: {
+            managedStarts += 1
+        }, uptime: { uptime })
+        defer { model.closeSettings() }
+        let startDeadline = Date().addingTimeInterval(2)
+        while managedStarts == 0 && Date() < startDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(managedStarts == 1 && sessionStarts == 0, "only the registered service starts")
+        uptime += 60
+        let failureDeadline = Date().addingTimeInterval(2)
+        while !model.loginServiceUnavailable && Date() < failureDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(model.loginServiceUnavailable, "a registered service without a socket reports failure")
+        expect(managedStarts == 1 && sessionStarts == 0, "ongoing outage cannot start duplicate workers")
+        model.retryLoginService()
+        expect(managedStarts == 2 && !model.loginServiceUnavailable, "explicit retry starts a fresh attempt")
+    }
+
+    test("an available worker is observed without starting either kind of worker") {
+        var managedStarts = 0
+        var sessionStarts = 0
+        let finish = DispatchSemaphore(value: 0)
+        let model = AgentModel(watch: { receive in
+            _ = receive(phoneState(.off))
+            finish.wait()
+            return true
+        }, launchAgent: {
+            sessionStarts += 1
+            return Process()
+        }, loginServiceStatus: { .enabled }, startLoginService: {
+            managedStarts += 1
+        })
+        defer { model.closeSettings(); finish.signal() }
+        let deadline = Date().addingTimeInterval(2)
+        while model.state == nil && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(model.state?.status?.hotspot == .off, "Settings receives current phone status")
+        expect(managedStarts == 0 && sessionStarts == 0, "no start while a worker serves the socket")
     }
 
     test("explicit Quit stops an owned helper and suppresses recovery when the socket is unavailable") {

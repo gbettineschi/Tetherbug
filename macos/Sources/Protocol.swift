@@ -1,6 +1,8 @@
 import CoreBluetooth
 import Foundation
 
+let loginAgentLabel = "ie.xav.tetherbug.agent"
+
 /// The phone's GATT service (see README "BLE protocol").
 enum Gatt {
     static let service = CBUUID(string: "1581bac4-33fe-43a8-b97f-5dd7a01f48c9")
@@ -58,7 +60,7 @@ struct AgentState: Codable, Equatable {
     /// `org.nixos.tetherbug`); nil for the login item, the window's own agent or a terminal.
     var managedBy: String? = {
         guard let job = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"],
-              job != "0", job != "ie.xav.tetherbug.agent", !job.hasPrefix("application.") else { return nil }
+              job != "0", job != loginAgentLabel, !job.hasPrefix("application.") else { return nil }
         return job
     }()
     /// Only filled in the reply to an explicit `password` request, never in the `watch` stream.
