@@ -300,6 +300,7 @@ func runMenuBarTests() {
 
     test("opening settings starts a session helper when launch at login is off") {
         var launches = 0
+        var loginOperations = 0
         var child: Process?
         let model = AgentModel(watch: { _ in false }, launchAgent: {
             launches += 1
@@ -309,6 +310,10 @@ func runMenuBarTests() {
             try process.run()
             child = process
             return process
+        }, loginServiceStatus: { .notRegistered }, startLoginService: {
+            loginOperations += 1
+        }, repairLoginService: {
+            loginOperations += 1
         })
         defer { model.closeSettings(); child?.terminate(); child?.waitUntilExit() }
         let deadline = Date().addingTimeInterval(2)
@@ -316,6 +321,7 @@ func runMenuBarTests() {
         expect(launches == 1, "manual launch starts the helper with launch at login off")
         RunLoop.main.run(until: Date().addingTimeInterval(1.1))
         expect(launches == 1, "a live helper is not launched twice")
+        expect(loginOperations == 0, "opening with login disabled preserves that setting")
         model.closeSettings()
         expect(child?.isRunning == true, "closing settings keeps the menu-bar helper alive")
     }
@@ -354,8 +360,9 @@ func runMenuBarTests() {
         expect(newWorker != nil && requests == 2, "retry after the socket becomes available")
     }
 
-    test("enabled login service is started through macOS and never falls back automatically") {
+    test("missing enabled login service is repaired once before asking for help") {
         var managedStarts = 0
+        var repairs = 0
         var sessionStarts = 0
         var uptime: TimeInterval = 10
         let model = AgentModel(watch: { _ in false }, launchAgent: {
@@ -363,6 +370,8 @@ func runMenuBarTests() {
             return Process()
         }, loginServiceStatus: { .enabled }, startLoginService: {
             managedStarts += 1
+        }, repairLoginService: {
+            repairs += 1
         }, uptime: { uptime })
         defer { model.closeSettings() }
         let startDeadline = Date().addingTimeInterval(2)
@@ -371,12 +380,18 @@ func runMenuBarTests() {
         }
         expect(managedStarts == 1 && sessionStarts == 0, "only the registered service starts")
         uptime += 60
+        let repairDeadline = Date().addingTimeInterval(2)
+        while repairs == 0 && !model.loginServiceUnavailable && Date() < repairDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(repairs == 1 && !model.loginServiceUnavailable, "expired startup triggers one native repair")
+        uptime += 60
         let failureDeadline = Date().addingTimeInterval(2)
         while !model.loginServiceUnavailable && Date() < failureDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         expect(model.loginServiceUnavailable, "a registered service without a socket reports failure")
-        expect(managedStarts == 1 && sessionStarts == 0, "ongoing outage cannot start duplicate workers")
+        expect(repairs == 1 && managedStarts == 1 && sessionStarts == 0, "ongoing outage cannot loop or start another worker")
         model.retryLoginService()
         expect(managedStarts == 2 && !model.loginServiceUnavailable, "explicit retry starts a fresh attempt")
     }

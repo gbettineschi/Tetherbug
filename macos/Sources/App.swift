@@ -69,8 +69,10 @@ final class AgentModel: ObservableObject {
     private let agent = SMAppService.agent(plistName: loginAgentLabel + ".plist")
     private let loginServiceStatus: () -> SMAppService.Status
     private let startLoginService: () throws -> Void
+    private let repairLoginService: () throws -> Void
     private let uptime: () -> TimeInterval
     private var loginStartDeadline: TimeInterval?
+    private var attemptedLoginRepair = false
 
     init(defaults: UserDefaults = Settings.defaults,
          watch: @escaping (@escaping (AgentState) -> Bool) -> Bool = { SocketClient.request("watch", onState: $0) },
@@ -101,12 +103,25 @@ final class AgentModel: ObservableObject {
              }
              try process.run()
          },
+         repairLoginService: @escaping () throws -> Void = {
+             let service = SMAppService.agent(plistName: loginAgentLabel + ".plist")
+             guard service.status == .enabled,
+                   PowerActivity.isFullWake(SystemPowerMonitor.capabilities()) else { return }
+             do {
+                 try service.unregister()
+             } catch {
+                 // A package upgrade can remove the job before Service Management sees it.
+                 guard service.status == .notRegistered else { throw error }
+             }
+             try service.register()
+         },
          uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.defaults = defaults
         self.launchAgent = launchAgent
         self.request = request
         self.loginServiceStatus = loginServiceStatus
         self.startLoginService = startLoginService
+        self.repairLoginService = repairLoginService
         self.uptime = uptime
         self.loginItem = loginServiceStatus()
         onNoWifi = defaults.object(forKey: "onNoWifi") as? Bool ?? true
@@ -214,20 +229,42 @@ final class AgentModel: ObservableObject {
             return
         }
         if let deadline = loginStartDeadline {
-            if uptime() >= deadline && !loginServiceUnavailable { loginServiceUnavailable = true }
+            if uptime() >= deadline && !loginServiceUnavailable { repairMissingLoginService() }
             return
         }
         loginStartDeadline = uptime() + 8
         do {
             try startLoginService()
         } catch {
-            loginServiceUnavailable = true
             log("couldn't start the login agent: \(error.localizedDescription)")
+            repairMissingLoginService()
+        }
+    }
+
+    private func repairMissingLoginService() {
+        guard !attemptedLoginRepair else {
+            loginServiceUnavailable = true
+            return
+        }
+        attemptedLoginRepair = true
+        // Service Management can still say enabled after an upgrade removed the launchd job.
+        // Repair once, then wait for the socket because registration starts the new worker.
+        loginStartDeadline = uptime() + 8
+        do {
+            try repairLoginService()
+            refreshLoginServiceStatus()
+        } catch {
+            refreshLoginServiceStatus()
+            loginServiceUnavailable = loginItem == .enabled
+            loginError = error.localizedDescription
+            log("couldn't repair the login agent: \(error.localizedDescription)")
         }
     }
 
     func retryLoginService() {
         guard state == nil else { return }
+        loginError = nil
+        attemptedLoginRepair = false
         clearLoginStartAttempt()
         recoverAgent()
     }
@@ -262,6 +299,7 @@ final class AgentModel: ObservableObject {
 
     func setLoginItem(_ on: Bool) {
         loginError = nil
+        attemptedLoginRepair = false
         clearLoginStartAttempt()
         do {
             if on {
