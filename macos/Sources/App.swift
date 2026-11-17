@@ -1,5 +1,6 @@
 import AppKit
 import CoreBluetooth
+import CoreServices
 import ServiceManagement
 import SwiftUI
 
@@ -70,9 +71,10 @@ final class AgentModel: ObservableObject {
     private let loginServiceStatus: () -> SMAppService.Status
     private let startLoginService: () throws -> Void
     private let repairLoginService: () throws -> Void
+    private let isFullWake: () -> Bool
     private let uptime: () -> TimeInterval
     private var loginStartDeadline: TimeInterval?
-    private var attemptedLoginRepair = false
+    private var loginRepairAttempts = 0
 
     init(defaults: UserDefaults = Settings.defaults,
          watch: @escaping (@escaping (AgentState) -> Bool) -> Bool = { SocketClient.request("watch", onState: $0) },
@@ -105,8 +107,10 @@ final class AgentModel: ObservableObject {
          },
          repairLoginService: @escaping () throws -> Void = {
              let service = SMAppService.agent(plistName: loginAgentLabel + ".plist")
-             guard service.status == .enabled,
-                   PowerActivity.isFullWake(SystemPowerMonitor.capabilities()) else { return }
+             guard service.status == .enabled else { return }
+             // The installed bundle may have replaced an older signature at the same path.
+             let refresh = LSRegisterURL(Bundle.main.bundleURL as CFURL, true)
+             guard refresh == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(refresh)) }
              do {
                  try service.unregister()
              } catch {
@@ -115,6 +119,9 @@ final class AgentModel: ObservableObject {
              }
              try service.register()
          },
+         isFullWake: @escaping () -> Bool = {
+             PowerActivity.isFullWake(SystemPowerMonitor.capabilities())
+         },
          uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.defaults = defaults
         self.launchAgent = launchAgent
@@ -122,6 +129,7 @@ final class AgentModel: ObservableObject {
         self.loginServiceStatus = loginServiceStatus
         self.startLoginService = startLoginService
         self.repairLoginService = repairLoginService
+        self.isFullWake = isFullWake
         self.uptime = uptime
         self.loginItem = loginServiceStatus()
         onNoWifi = defaults.object(forKey: "onNoWifi") as? Bool ?? true
@@ -222,7 +230,7 @@ final class AgentModel: ObservableObject {
     private var sessionAgent: Process?
 
     private func recoverAgent() {
-        guard !agentStopping else { return }
+        guard !agentStopping, isFullWake() else { return }
         refreshLoginServiceStatus()
         guard loginItem == .enabled else {
             startSessionAgent()
@@ -242,13 +250,14 @@ final class AgentModel: ObservableObject {
     }
 
     private func repairMissingLoginService() {
-        guard !attemptedLoginRepair else {
+        guard loginRepairAttempts < 2 else {
             loginServiceUnavailable = true
             return
         }
-        attemptedLoginRepair = true
+        loginRepairAttempts += 1
         // Service Management can still say enabled after an upgrade removed the launchd job.
-        // Repair once, then wait for the socket because registration starts the new worker.
+        // Wait for the socket after registering. Once more can be needed while the
+        // updated bundle signature propagates through Service Management.
         loginStartDeadline = uptime() + 8
         do {
             try repairLoginService()
@@ -264,7 +273,7 @@ final class AgentModel: ObservableObject {
     func retryLoginService() {
         guard state == nil else { return }
         loginError = nil
-        attemptedLoginRepair = false
+        loginRepairAttempts = 0
         clearLoginStartAttempt()
         recoverAgent()
     }
@@ -299,7 +308,7 @@ final class AgentModel: ObservableObject {
 
     func setLoginItem(_ on: Bool) {
         loginError = nil
-        attemptedLoginRepair = false
+        loginRepairAttempts = 0
         clearLoginStartAttempt()
         do {
             if on {

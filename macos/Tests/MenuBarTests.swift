@@ -360,11 +360,13 @@ func runMenuBarTests() {
         expect(newWorker != nil && requests == 2, "retry after the socket becomes available")
     }
 
-    test("missing enabled login service is repaired once before asking for help") {
+    test("missing enabled login service is repaired with bounded retries") {
         var managedStarts = 0
         var repairs = 0
         var sessionStarts = 0
         var uptime: TimeInterval = 10
+        var fullWake = false
+        var powerChecks = 0
         let model = AgentModel(watch: { _ in false }, launchAgent: {
             sessionStarts += 1
             return Process()
@@ -372,8 +374,17 @@ func runMenuBarTests() {
             managedStarts += 1
         }, repairLoginService: {
             repairs += 1
+        }, isFullWake: {
+            powerChecks += 1
+            return fullWake
         }, uptime: { uptime })
         defer { model.closeSettings() }
+        let darkDeadline = Date().addingTimeInterval(2)
+        while powerChecks == 0 && Date() < darkDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(powerChecks > 0 && managedStarts == 0 && repairs == 0, "DarkWake does not start or repair a worker")
+        fullWake = true
         let startDeadline = Date().addingTimeInterval(2)
         while managedStarts == 0 && Date() < startDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
@@ -386,12 +397,18 @@ func runMenuBarTests() {
         }
         expect(repairs == 1 && !model.loginServiceUnavailable, "expired startup triggers one native repair")
         uptime += 60
+        let secondRepairDeadline = Date().addingTimeInterval(2)
+        while repairs == 1 && !model.loginServiceUnavailable && Date() < secondRepairDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(repairs == 2 && !model.loginServiceUnavailable, "retry once if the first registration never answers")
+        uptime += 60
         let failureDeadline = Date().addingTimeInterval(2)
         while !model.loginServiceUnavailable && Date() < failureDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         expect(model.loginServiceUnavailable, "a registered service without a socket reports failure")
-        expect(repairs == 1 && managedStarts == 1 && sessionStarts == 0, "ongoing outage cannot loop or start another worker")
+        expect(repairs == 2 && managedStarts == 1 && sessionStarts == 0, "ongoing outage cannot loop or start another worker")
         model.retryLoginService()
         expect(managedStarts == 2 && !model.loginServiceUnavailable, "explicit retry starts a fresh attempt")
     }
