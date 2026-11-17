@@ -56,6 +56,8 @@ struct AgentState: Codable, Equatable {
     var requestError: String?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
+    /// Only the session worker's direct reply to `handover` can accept a transfer.
+    var handoverAccepted: Bool?
     /// The launchd job running the agent when it isn't the app's own login item (e.g. nix-darwin's
     /// `org.nixos.tetherbug`); nil for the login item, the window's own agent or a terminal.
     var managedBy: String? = {

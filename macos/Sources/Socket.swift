@@ -14,12 +14,23 @@ final class AgentLock {
 
     deinit { close(descriptor) }
 
-    static func acquire(path: String, handover: (() -> Bool)? = nil) -> AgentLock? {
+    enum Handover { case unavailable, declined, accepted }
+
+    static func acquire(path: String, handover: (() -> Handover)? = nil) -> AgentLock? {
         if let lease = AgentLock(path: path) { return lease }
-        // An acknowledged handover stops the old worker before it releases the lock.
-        guard handover?() == true else { return nil }
+        guard let handover else { return nil }
+        // The lock can be held before the old worker's socket is ready. Once the worker
+        // acknowledges, stop sending requests and wait for it to release the lock.
         let deadline = ProcessInfo.processInfo.systemUptime + 2
+        var accepted = false
         repeat {
+            if !accepted {
+                switch handover() {
+                case .unavailable: break
+                case .declined: return nil
+                case .accepted: accepted = true
+                }
+            }
             if let lease = AgentLock(path: path) { return lease }
             Thread.sleep(forTimeInterval: 0.05)
         } while ProcessInfo.processInfo.systemUptime < deadline

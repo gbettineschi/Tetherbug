@@ -60,13 +60,13 @@ final class Agent: NSObject {
     func run() {
         // A login service can take over from a session worker left behind after Settings closed.
         // It must own the lock before binding the socket or starting Bluetooth.
-        let handover: (() -> Bool)? = isLoginAgent && activity.active ? {
-            var accepted = false
+        let handover: (() -> AgentLock.Handover)? = isLoginAgent && activity.active ? {
+            var result = AgentLock.Handover.unavailable
             SocketClient.request("handover") { reply in
-                accepted = reply.stopping == true
+                result = reply.handoverAccepted == true ? .accepted : .declined
                 return false
             }
-            return accepted
+            return result
         } : nil
         guard let lease = AgentLock.acquire(path: Socket.path + ".lock", handover: handover) else {
             note("cannot acquire the agent lock; another agent may be running")
@@ -123,7 +123,7 @@ final class Agent: NSObject {
             quit(closeSettings: false)
             // Acknowledge only to the successor. The Settings watcher must stay open to reconnect.
             var reply = state
-            reply.stopping = true
+            reply.handoverAccepted = true
             return reply
         case "password":
             var reply = state

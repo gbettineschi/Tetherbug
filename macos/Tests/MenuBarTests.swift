@@ -326,17 +326,32 @@ func runMenuBarTests() {
         var oldWorker = AgentLock(path: file.path)
         expect(oldWorker != nil, "session worker obtained the original lease")
         var requests = 0
-        let declined = AgentLock.acquire(path: file.path, handover: { requests += 1; return false })
+        let declined = AgentLock.acquire(path: file.path, handover: { requests += 1; return .declined })
         expect(declined == nil, "another managed worker can refuse the handover")
         let newWorker = AgentLock.acquire(path: file.path, handover: {
             requests += 1
             oldWorker = nil
-            return true
+            return .accepted
         })
         expect(newWorker != nil && requests == 2, "registered worker inherits a released lease")
         withExtendedLifetime(newWorker) {
             expect(AgentLock(path: file.path) == nil, "the successor exclusively owns the lease")
         }
+    }
+
+    test("registered worker waits for a starting session worker's socket") {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var oldWorker = AgentLock(path: file.path)
+        expect(oldWorker != nil, "session worker already holds the lock")
+        var requests = 0
+        let newWorker = AgentLock.acquire(path: file.path, handover: {
+            requests += 1
+            if requests == 1 { return .unavailable }
+            oldWorker = nil
+            return .accepted
+        })
+        expect(newWorker != nil && requests == 2, "retry after the socket becomes available")
     }
 
     test("enabled login service is started through macOS and never falls back automatically") {
@@ -387,6 +402,29 @@ func runMenuBarTests() {
         }
         expect(model.state?.status?.hotspot == .off, "Settings receives current phone status")
         expect(managedStarts == 0 && sessionStarts == 0, "no start while a worker serves the socket")
+    }
+
+    test("explicit Quit reaches a registered worker that is still starting") {
+        var starts = 0
+        var requests = 0
+        let model = AgentModel(watch: { _ in false }, request: { command in
+            guard command == "quit" else { return false }
+            requests += 1
+            return requests == 2
+        }, loginServiceStatus: { .enabled }, startLoginService: { starts += 1 })
+        let deadline = Date().addingTimeInterval(2)
+        while starts == 0 && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(starts == 1, "registered worker start is pending")
+        var finished = false
+        model.quit { finished = true }
+        let quitDeadline = Date().addingTimeInterval(2)
+        while !finished && Date() < quitDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(finished && requests == 2, "Quit waits for the starting worker's socket")
+        expect(starts == 1, "no further start requested")
     }
 
     test("explicit Quit stops an owned helper and suppresses recovery when the socket is unavailable") {

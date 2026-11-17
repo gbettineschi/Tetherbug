@@ -176,8 +176,17 @@ final class AgentModel: ObservableObject {
         guard !agentStopping else { completion(); return }
         closeSettings() // prevent the watcher from treating intentional shutdown as a crash
         let child = sessionAgent
+        // A submitted launchctl start can finish after Cmd-Q. Give that worker the remainder
+        // of its startup window to open the socket before giving up on a graceful Quit.
+        let pendingStartTime = loginServiceUnavailable ? 0 : max(0, (loginStartDeadline ?? 0) - uptime())
         DispatchQueue.global().async { [request] in
-            let acknowledged = request("quit")
+            let deadline = ProcessInfo.processInfo.systemUptime + pendingStartTime
+            var receivedQuit = request("quit")
+            while !receivedQuit && ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+                receivedQuit = request("quit")
+            }
+            let acknowledged = receivedQuit
             if !acknowledged, child?.isRunning == true {
                 child?.terminate()
                 child?.waitUntilExit()
