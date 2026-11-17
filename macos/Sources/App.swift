@@ -30,6 +30,10 @@ struct PathShape: Shape {
 
 /// Streams the agent's state; nil while the agent isn't running.
 final class AgentModel: ObservableObject {
+    enum LoginStartup { case idle, repairing, unavailable }
+    private static let loginStartTimeout: TimeInterval = 8
+    private static let signatureRefreshTime: TimeInterval = 45
+
     @Published var state: AgentState?
     @Published var onNoWifi: Bool {
         didSet {
@@ -65,7 +69,8 @@ final class AgentModel: ObservableObject {
     }
     @Published private(set) var loginItem: SMAppService.Status
     @Published var loginError: String?
-    @Published private(set) var loginServiceUnavailable = false
+    @Published private(set) var loginStartup = LoginStartup.idle
+    var loginServiceUnavailable: Bool { loginStartup == .unavailable }
 
     private let agent = SMAppService.agent(plistName: loginAgentLabel + ".plist")
     private let loginServiceStatus: () -> SMAppService.Status
@@ -201,7 +206,8 @@ final class AgentModel: ObservableObject {
         let child = sessionAgent
         // A submitted launchctl start can finish after Cmd-Q. Give that worker the remainder
         // of its startup window to open the socket before giving up on a graceful Quit.
-        let pendingStartTime = loginServiceUnavailable ? 0 : max(0, (loginStartDeadline ?? 0) - uptime())
+        let remaining = (loginStartDeadline ?? 0) - uptime()
+        let pendingStartTime = loginServiceUnavailable ? 0 : max(0, min(Self.loginStartTimeout, remaining))
         DispatchQueue.global().async { [request] in
             let deadline = ProcessInfo.processInfo.systemUptime + pendingStartTime
             var receivedQuit = request("quit")
@@ -240,7 +246,7 @@ final class AgentModel: ObservableObject {
             if uptime() >= deadline && !loginServiceUnavailable { repairMissingLoginService() }
             return
         }
-        loginStartDeadline = uptime() + 8
+        loginStartDeadline = uptime() + Self.loginStartTimeout
         do {
             try startLoginService()
         } catch {
@@ -251,20 +257,21 @@ final class AgentModel: ObservableObject {
 
     private func repairMissingLoginService() {
         guard loginRepairAttempts < 2 else {
-            loginServiceUnavailable = true
+            loginStartup = .unavailable
             return
         }
         loginRepairAttempts += 1
+        loginStartup = .repairing
         // Service Management can still say enabled after an upgrade removed the launchd job.
-        // Wait for the socket after registering. Once more can be needed while the
-        // updated bundle signature propagates through Service Management.
-        loginStartDeadline = uptime() + 8
+        // Give the updated signature time to propagate before the last registration attempt.
+        let wait = loginRepairAttempts == 1 ? Self.signatureRefreshTime : Self.loginStartTimeout
+        loginStartDeadline = uptime() + wait
         do {
             try repairLoginService()
             refreshLoginServiceStatus()
         } catch {
             refreshLoginServiceStatus()
-            loginServiceUnavailable = loginItem == .enabled
+            loginStartup = loginItem == .enabled ? .unavailable : .idle
             loginError = error.localizedDescription
             log("couldn't repair the login agent: \(error.localizedDescription)")
         }
@@ -287,7 +294,7 @@ final class AgentModel: ObservableObject {
 
     private func clearLoginStartAttempt() {
         loginStartDeadline = nil
-        if loginServiceUnavailable { loginServiceUnavailable = false }
+        if loginStartup != .idle { loginStartup = .idle }
     }
 
     private func startSessionAgent() {
@@ -437,7 +444,9 @@ struct ContentView: View {
                     Button("Allow Tetherbug in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                 }
                 if let error = model.loginError { Text(error).foregroundStyle(.red).font(.callout) }
-                if model.loginServiceUnavailable {
+                if model.loginStartup == .repairing {
+                    Text("Refreshing Tetherbug’s background service…").foregroundStyle(.secondary)
+                } else if model.loginServiceUnavailable {
                     Text("Tetherbug’s background service didn’t start.").foregroundStyle(.secondary)
                     Button("Retry Background Service") { model.retryLoginService() }
                 }

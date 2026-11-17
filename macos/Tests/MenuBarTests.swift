@@ -396,6 +396,9 @@ func runMenuBarTests() {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         expect(repairs == 1 && !model.loginServiceUnavailable, "expired startup triggers one native repair")
+        uptime += 10
+        RunLoop.main.run(until: Date().addingTimeInterval(1.1))
+        expect(repairs == 1, "give macOS time to refresh the replaced bundle's registration")
         uptime += 60
         let secondRepairDeadline = Date().addingTimeInterval(2)
         while repairs == 1 && !model.loginServiceUnavailable && Date() < secondRepairDeadline {
