@@ -100,7 +100,7 @@ def main():
                                    "macosSigning": "ad-hoc; not notarized"}, indent=2) + "\n")
     if args.publish:
         run("gh", "release", "create", tag, "--repo", REPO, "--verify-tag",
-            "--title", f"Tetherbug Personal {version}", "--notes-file", str(notes),
+            "--title", f"Tetherbug (gbettineschi's version) {version}", "--notes-file", str(notes),
             "--latest", *(str(p) for p in [*assets, checksums, manifest]))
     print(f"{'Published' if args.publish else 'Built'} {version}: {out}")
 
