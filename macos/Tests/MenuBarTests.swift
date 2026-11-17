@@ -314,7 +314,7 @@ func runMenuBarTests() {
             loginOperations += 1
         }, repairLoginService: {
             loginOperations += 1
-        })
+        }, isFullWake: { true })
         defer { model.closeSettings(); child?.terminate(); child?.waitUntilExit() }
         let deadline = Date().addingTimeInterval(2)
         while launches == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
@@ -443,7 +443,7 @@ func runMenuBarTests() {
             guard command == "quit" else { return false }
             requests += 1
             return requests == 2
-        }, loginServiceStatus: { .enabled }, startLoginService: { starts += 1 })
+        }, loginServiceStatus: { .enabled }, startLoginService: { starts += 1 }, isFullWake: { true })
         let deadline = Date().addingTimeInterval(2)
         while starts == 0 && Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
@@ -471,7 +471,7 @@ func runMenuBarTests() {
             try process.run()
             child = process
             return process
-        }, request: { command in commands.append(command); return false })
+        }, request: { command in commands.append(command); return false }, isFullWake: { true })
         defer { if child?.isRunning == true { child?.terminate(); child?.waitUntilExit() } }
         let deadline = Date().addingTimeInterval(2)
         while launches == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
