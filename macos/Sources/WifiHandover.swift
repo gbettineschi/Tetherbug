@@ -57,6 +57,7 @@ final class WifiHandover {
     private var preferred: [String] = []
     private var hotspot: String?
     private var stableSince: Date?
+    private var attemptedSSID: String?
     private var nextScan = Date.distantPast
     private var failedUntil: [String: Date] = [:]
 
@@ -82,6 +83,7 @@ final class WifiHandover {
         service.cancel()
         phase = .idle
         stableSince = nil
+        attemptedSSID = nil
         preferred = []
         hotspot = nil
         report(nil)
@@ -109,15 +111,20 @@ final class WifiHandover {
             guard date.timeIntervalSince(stableSince!) >= 3 else { return }
             verify(target)
         case let .verifying(target):
-            if c.currentSSID != target || !c.wifiConnected { cancel() }
+            if c.currentSSID != target || !c.wifiConnected { connectionLost(target) }
         case .idle:
             if let current = c.currentSSID, c.candidates.contains(current), c.wifiConnected {
                 guard (failedUntil[current] ?? .distantPast) <= date else { return }
+                attemptedSSID = nil // observed native/manual join: nothing for us to undo
                 settle(current)
             } else if c.usingHotspotOrOffline, date >= nextScan {
                 scan()
             }
-        case .scanning, .joining, .restoring: break
+        case let .joining(target):
+            if let current = c.currentSSID, current != target, current != hotspot { cancel() }
+        case .restoring:
+            if let current = c.currentSSID, current != attemptedSSID, current != hotspot { cancel() }
+        case .scanning: break
         }
     }
 
@@ -140,6 +147,7 @@ final class WifiHandover {
             guard let target = c.candidates.first(where: {
                 visible.contains($0) && (self.failedUntil[$0] ?? .distantPast) <= self.now()
             }) else { self.phase = .idle; return }
+            self.attemptedSSID = target
             self.phase = .joining(target)
             self.report("Connecting to \(target)…")
             self.service.join(target) { [weak self] success in
@@ -162,7 +170,7 @@ final class WifiHandover {
         service.verifyInternet { [weak self] success in
             guard let self, self.accepts(id) else { return }
             let c = self.context()
-            guard c.currentSSID == target, c.wifiConnected else { self.cancel(); return }
+            guard c.currentSSID == target, c.wifiConnected else { self.connectionLost(target); return }
             if success {
                 self.cancel()
                 self.turnOff()
@@ -177,12 +185,19 @@ final class WifiHandover {
         stableSince = nil
         report("Couldn’t use \(target). Keeping the hotspot on.")
         // Do not undo a manual network change; restore only the failed attempt's connection.
-        guard let hotspot, c.currentSSID == target || (!c.wifiConnected && c.currentSSID == nil) else { return }
+        guard attemptedSSID == target, let hotspot,
+              c.currentSSID == target || (!c.wifiConnected && c.currentSSID == nil) else { return }
         phase = .restoring
         let id = epoch
         service.join(hotspot) { [weak self] _ in
             guard let self, self.accepts(id) else { return }
             self.phase = .idle
         }
+    }
+
+    private func connectionLost(_ target: String) {
+        let c = context()
+        if c.currentSSID == nil || c.currentSSID == target || c.currentSSID == hotspot { fail(target) }
+        else { cancel() } // a different user-selected network owns the connection now
     }
 }

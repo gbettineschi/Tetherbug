@@ -19,18 +19,20 @@ enum WifiAccess {
 final class MacWifiHandoverService: WifiHandoverService {
     private let activity: PowerActivity
     private let queue: DispatchQueue
+    private let wifiInterface: () -> NWInterface?
     private let lock = NSLock()
     private var epoch: UInt64 = 0
     private var process: Process?
     private var connection: NWConnection?
     private var timeout: DispatchWorkItem?
-    private let location = CLLocationManager()
+    private lazy var location = CLLocationManager()
 
     var locationAllowed: Bool { WifiAccess.authorized(location.authorizationStatus) }
 
-    init(activity: PowerActivity, queue: DispatchQueue) {
+    init(activity: PowerActivity, queue: DispatchQueue, wifiInterface: @escaping () -> NWInterface?) {
         self.activity = activity
         self.queue = queue
+        self.wifiInterface = wifiInterface
     }
 
     func cancel() {
@@ -112,9 +114,10 @@ final class MacWifiHandoverService: WifiHandoverService {
     /// from making an unusable candidate appear to work. No persistent connection or timer remains.
     func verifyInternet(_ completion: @escaping (Bool) -> Void) {
         let token = begin()
-        guard allows(token) else { completion(false); return }
+        guard allows(token), let interface = wifiInterface(),
+              interface.name == CWWiFiClient.shared().interface()?.interfaceName else { completion(false); return }
         let parameters = NWParameters.tls
-        parameters.requiredInterfaceType = .wifi
+        parameters.requiredInterface = interface
         parameters.prohibitedInterfaceTypes = [.cellular, .wiredEthernet, .loopback, .other]
         let probe = NWConnection(host: "captive.apple.com", port: 443, using: parameters)
         connection = probe

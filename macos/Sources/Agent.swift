@@ -39,7 +39,9 @@ final class Agent: NSObject {
     private var wifi: NWPathMonitor?
     private let scanQueue = DispatchQueue(label: "ie.xav.tetherbug.scan")
     private var wifiPathConnected = false
-    private lazy var wifiService = MacWifiHandoverService(activity: activity, queue: scanQueue)
+    private var wifiInterface: NWInterface?
+    private lazy var wifiService = MacWifiHandoverService(activity: activity, queue: scanQueue,
+        wifiInterface: { [weak self] in self?.wifiInterface })
     private lazy var handover = WifiHandover(service: wifiService,
         context: { [unowned self] in self.handoverContext() },
         turnOff: { [weak self] in self?.request(false, reason: "preferred Wi-Fi verified") },
@@ -189,6 +191,7 @@ final class Agent: NSObject {
     private func suspendRadio() {
         handover.cancel()
         wifiPathConnected = false
+        wifiInterface = nil
         maintenance?.invalidate()
         maintenance = nil
         pendingFullScan?.cancel()
@@ -207,8 +210,10 @@ final class Agent: NSObject {
     }
 
     private func wifiChanged(_ path: NWPath) {
-        wifiPathConnected = path.status == .satisfied
-        let poweredOn = CWWiFiClient.shared().interface()?.powerOn() ?? false
+        let interface = CWWiFiClient.shared().interface()
+        wifiInterface = path.availableInterfaces.first { $0.type == .wifi && $0.name == interface?.interfaceName }
+        wifiPathConnected = path.status == .satisfied && wifiInterface != nil
+        let poweredOn = interface?.powerOn() ?? false
         let offline = poweredOn && path.status != .satisfied
         if offline != state.wifiOffline { note(offline ? "Wi-Fi lost" : "Wi-Fi connected") }
         state.wifiOffline = offline
@@ -295,14 +300,19 @@ final class Agent: NSObject {
     private func handoverContext() -> WifiHandover.Context {
         let enabled = Settings.returnToPreferredWifi
         let networks = Settings.preferredWifiNetworks
-        // Opting out keeps the existing trigger's cost and permission behaviour unchanged.
-        let interface = enabled && !networks.isEmpty ? CWWiFiClient.shared().interface() : nil
-        return .init(allowed: activity.allows(activity.generation) && state.stopping != true,
+        var c = WifiHandover.Context(allowed: activity.allows(activity.generation) && state.stopping != true,
             enabled: enabled, automaticActive: control.automaticActive(), preferred: networks,
-            currentSSID: interface?.ssid(), wifiConnected: wifiPathConnected,
+            currentSSID: nil, wifiConnected: wifiPathConnected,
             hotspotSSID: state.status?.ssid, hotspotOn: state.status?.hotspot == .on,
-            canControlHotspot: control.canToggle(state), wifiPoweredOn: interface?.powerOn() == true,
-            locationAllowed: enabled && !networks.isEmpty && wifiService.locationAllowed)
+            canControlHotspot: control.canToggle(state), wifiPoweredOn: false, locationAllowed: false)
+        // Do not poll hardware or location authorization for disabled/paused/ineligible handover.
+        guard c.allowed, c.enabled, c.automaticActive, c.hotspotOn, c.canControlHotspot,
+              !c.candidates.isEmpty, wifiService.locationAllowed else { return c }
+        c.locationAllowed = true
+        let interface = CWWiFiClient.shared().interface()
+        c.currentSSID = interface?.ssid()
+        c.wifiPoweredOn = interface?.powerOn() == true
+        return c
     }
 
     private func publishControl() {

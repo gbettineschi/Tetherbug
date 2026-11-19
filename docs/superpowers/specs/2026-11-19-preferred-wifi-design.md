@@ -10,6 +10,8 @@ Ask macOS to join using its saved credentials, without collecting or storing pas
 
 If macOS itself joins a listed network, perform the same verification and hotspot shutoff. Existing five-minute hotspot shutdown cooldowns remain unchanged. Disabled or paused automatic mode blocks this feature too.
 
+A manually/native joined network is observed, not owned by Tetherbug: if its internet check fails, leave it connected so the user can complete captive-portal login. Restore the hotspot only to undo an agent-initiated failed handover. A manually selected unrelated network cancels any outstanding join or restoration. Bind the internet probe to the exact Wi-Fi adapter whose SSID was checked, not just the Wi-Fi interface type. Avoid Wi-Fi identity polling while automatic mode is paused or off.
+
 Before sleep/DarkWake, cancel queued joins, connection probes, and processing of scan results. Check awake ownership again at every asynchronous boundary. In-progress OS scans cannot be recalled, but their results cannot produce follow-up work. No Android changes, no new phone permissions, no wake assertions, no Keepresso integration.
 
 Build and test both Mac architectures, install in place at `/Applications/Tetherbug.app`, and keep any rollback bundle compressed. Ship no duplicate app bundles. A live network-switch test requires actual selected networks; report its absence honestly. Publishing a release remains separate from implementing and installing this feature.

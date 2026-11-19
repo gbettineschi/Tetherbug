@@ -106,6 +106,41 @@ func runWifiHandoverTests() {
         f.service.verified?(true)
         expect(f.offs == 1, "verified native connection shuts hotspot off")
     }
+    test("a manually joined captive network is left available for portal sign-in") {
+        let f = HandoverFixture()
+        f.context.currentSSID = "EPFL"
+        f.handover.tick(); f.settle(); f.service.verified?(false)
+        expect(f.offs == 0 && f.service.joins.isEmpty, "no agent-owned join to undo")
+        f.date += 60; f.handover.tick()
+        expect(f.service.probes == 1, "failed native connection also backs off")
+    }
+    test("candidate loss during a probe restores an agent-owned hotspot connection") {
+        for completionBeforeTick in [false, true] {
+            let f = HandoverFixture()
+            f.startJoin(); f.joined(); f.settle()
+            f.context.currentSSID = nil
+            f.context.wifiConnected = false
+            if completionBeforeTick { f.service.verified?(true) } else { f.handover.tick() }
+            expect(f.offs == 0 && f.service.joins.last == "Test hotspot", "restore on both event orders")
+            f.context.currentSSID = "Test hotspot"; f.context.wifiConnected = true; f.service.joined?(true)
+            f.date += 60; f.handover.tick(); f.service.scanned?(["Home"])
+            expect(f.service.joins == ["Home", "Test hotspot"], "lost target also backs off")
+        }
+    }
+    test("a new unrelated connection cancels pending joins and restorations") {
+        for duringRestore in [false, true] {
+            let f = HandoverFixture()
+            f.startJoin()
+            if duringRestore { f.joined(); f.settle(); f.service.verified?(false) }
+            let pending = f.service.joined
+            let cancellations = f.service.cancellations
+            f.context.currentSSID = "Cafe"
+            f.handover.tick()
+            expect(f.service.cancellations > cancellations && !f.handover.busy, "cancel native request promptly")
+            pending?(true)
+            expect(!f.handover.busy && f.offs == 0, "late join completion cannot re-adopt connection")
+        }
+    }
     test("the phone hotspot is excluded even if listed first") {
         let f = HandoverFixture()
         f.context.preferred = ["Test hotspot", "Home"]
