@@ -32,10 +32,10 @@
 
 **Interfaces:** `WifiHandoverService.scan`, `.join`, `.verifyInternet`, `.cancel`; `WifiHandover.Context` describes current Wi-Fi, hotspot readiness, preferences and wake/automatic permission. `WifiHandover.tick()` advances the state machine; `.cancel()` invalidates callbacks; `.busy` suppresses competing auto-on requests during handover.
 
-- [ ] Write failing deterministic tests for discovery, ordered saved candidates, stable exact SSID + successful internet before Off, no-internet restoration, captive response, missing/denied permissions, list changes, manual network changes, rate limiting, failed-candidate backoff, manual pause, sleep and stale callbacks after wake.
-- [ ] Run `bash macos/test.sh` and confirm the new feature is missing.
-- [ ] Implement the state machine with injected clock, context, service and Off callback; no platform effects here.
-- [ ] Run the whole Mac suite; expect zero failures. Commit the tested policy.
+- [x] Write failing deterministic tests for discovery, ordered saved candidates, stable exact SSID + successful internet before Off, no-internet restoration, captive response, missing/denied permissions, list changes, manual network changes, rate limiting, failed-candidate backoff, manual pause, sleep and stale callbacks after wake.
+- [x] Run `bash macos/test.sh` and confirm the new feature is missing.
+- [x] Implement the state machine with injected clock, context, service and Off callback; no platform effects here.
+- [x] Run the whole Mac suite; expect zero failures. Commit the tested policy.
 
 ### Task 2: Native Wi-Fi service and Agent lifecycle
 
@@ -43,10 +43,10 @@
 
 **Interfaces:** Native service receives `PowerActivity` and the existing scan queue. Agent context supplies current exact SSID, Wi-Fi path, active automatic policy and saved preferences. Optional `AgentState.wifiHandoverMessage` reports progress/failures without affecting older decoders.
 
-- [ ] Test the connectivity-response parser (Apple success only, no redirects/captive/error/oversize) and active automatic policy (disabled/paused/expired).
-- [ ] Run RED, then implement native scans, bounded/cancellable saved-network join and Wi-Fi-bound TLS probe. Check power generation before every effect and callback.
-- [ ] Wire existing timer to handover; cancel before sleeping/quitting and on manual commands. Preserve existing hotspot cooldowns and avoid competing On commands while switching.
-- [ ] Run the whole Mac suite and build native code; expect zero failures. Commit.
+- [x] Test the connectivity-response parser (Apple success only, no redirects/captive/error/oversize) and active automatic policy (disabled/paused/expired).
+- [x] Run RED, then implement native scans, bounded/cancellable saved-network join and Wi-Fi-bound TLS probe. Check power generation before every effect and callback.
+- [x] Wire existing timer to handover; cancel before sleeping/quitting and on manual commands. Preserve existing hotspot cooldowns and avoid competing On commands while switching.
+- [x] Run the whole Mac suite and build native code; expect zero failures. Commit.
 
 ### Task 3: Settings, documentation and in-place local build
 
@@ -54,8 +54,20 @@
 
 **Interfaces:** Persist `returnToPreferredWifi: Bool` and `preferredWifiNetworks: [String]`; Settings view uses the same defaults and explicit CoreLocation authorization. Include the Location usage description in the generated bundle.
 
-- [ ] Implement native grouped Settings controls, explicit permission button, add/remove exact SSIDs and Add Current Network. Reject invalid/duplicate/hotspot entries. Follow existing SwiftUI ownership patterns.
-- [ ] Document activation, saved-network prerequisite, TLS verification, pauses, battery-friendly scan interval and Mac-only scope.
-- [ ] Run all tests; build arm64 and x86_64; inspect bundle metadata and signatures. Confirm Android diff is empty.
-- [ ] Request one independent review of the whole branch, fix important findings with regression coverage, then install at the definitive path with a compressed rollback copy.
-- [ ] Verify installed version, one actual app, managed startup and exposed Settings; report any permission or live Wi-Fi test requiring the user.
+- [x] Implement native grouped Settings controls, explicit permission button, add/remove exact SSIDs and Add Current Network. Reject invalid/duplicate/hotspot entries. Follow existing SwiftUI ownership patterns.
+- [x] Document activation, saved-network prerequisite, TLS verification, pauses, battery-friendly scan interval and Mac-only scope.
+- [x] Run all tests; build arm64 and x86_64; inspect bundle metadata and signatures. Confirm Android diff is empty.
+- [x] Request one independent review of the whole branch, fix important findings with regression coverage, then install at the definitive path with a compressed rollback copy.
+- [ ] Verify the Settings screen and full saved-network handover after the Mac is unlocked and networks are selected. Installed version, single actual app and managed startup are verified.
+
+
+## Implementation evidence — 2026-11-19
+
+- Baseline: 67 Mac tests, zero failures. Initial handover suite: 81; native/validation suite: 84.
+- Independent review: three important policy cases reproduced with eight failing assertions. Added ownership for agent-initiated joins, restoration/backoff after target loss, and cancellation when another network is selected. Final suite: **87 tests, zero failures**.
+- Review scope fixes: connectivity probe binds to the exact `NWInterface` matching CoreWLAN, and disabled/paused/ineligible handover avoids hardware identity reads.
+- Universal arm64/x86_64 build, strict ad-hoc signature verification and bundle property-list validation passed.
+- A standalone invocation of the actual native connectivity service on this Mac passed its TLS check over the exact Wi-Fi adapter. No Wi-Fi change was made during this diagnostic.
+- Installed `0.1.12-wifi.1` at `/Applications/Tetherbug.app`; compressed 0.1.11 rollback retained under ignored `build/`. Spotlight lists one actual installed bundle. Existing managed login worker recovered automatically after signature-registration refresh and is running the new version.
+- Android diff is empty. Feature remains disabled and list empty.
+- UI verification is blocked by the locked Mac. Native saved-credential/enterprise joins, Location permission attribution between window and worker, VPN configurations, and cancellation of an OS join already submitted still require a real handover test. No release is published as part of this implementation.
