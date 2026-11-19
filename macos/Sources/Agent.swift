@@ -21,6 +21,8 @@ final class Agent: NSObject {
     private var command: CBCharacteristic?
     private var credentials: CBCharacteristic?
     private var statusCharacteristic: CBCharacteristic?
+    private var statusReceiver = PhoneStatusReceiver()
+    private var statusSubscription = PhoneStatusSubscription()
     private var password: String? // kept in memory only
     private var server: SocketServer!
     private var agentLock: AgentLock?
@@ -232,6 +234,10 @@ final class Agent: NSObject {
     private func tick() {
         guard radioAllowed() else { return }
         maintainConnection()
+        if let action = statusSubscription.due() {
+            applyStatusAction(action)
+            return
+        }
         // Shizuku can recover without an AP/battery notification from Android. Read its current
         // readiness while unavailable, rather than leaving an old "not ready" snapshot forever.
         if state.connected, state.status?.controllable == false, Date() >= nextReadinessCheck,
@@ -304,7 +310,8 @@ final class Agent: NSObject {
             enabled: enabled, automaticActive: control.automaticActive(), preferred: networks,
             currentSSID: nil, wifiConnected: wifiPathConnected,
             hotspotSSID: state.status?.ssid, hotspotOn: state.status?.hotspot == .on,
-            canControlHotspot: control.canToggle(state), wifiPoweredOn: false, locationAllowed: false)
+            canControlHotspot: control.canToggle(state) && statusReceiver.ready && statusSubscription.ready,
+            wifiPoweredOn: false, locationAllowed: false)
         // Do not poll hardware or location authorization for disabled/paused/ineligible handover.
         guard c.allowed, c.enabled, c.automaticActive, c.hotspotOn, c.canControlHotspot,
               !c.candidates.isEmpty, wifiService.locationAllowed else { return c }
@@ -382,6 +389,8 @@ final class Agent: NSObject {
         command = nil
         credentials = nil
         statusCharacteristic = nil
+        statusReceiver = PhoneStatusReceiver()
+        statusSubscription = PhoneStatusSubscription()
         password = nil
         outstandingWrite = nil
         reconnectRequested = false
@@ -451,8 +460,7 @@ final class Agent: NSObject {
             switch characteristic.uuid {
             case Gatt.status:
                 statusCharacteristic = characteristic
-                peripheral.readValue(for: characteristic)
-                peripheral.setNotifyValue(true, for: characteristic)
+                applyStatusAction(statusSubscription.begin())
             case Gatt.command:
                 command = characteristic
             case Gatt.credentials:
@@ -470,9 +478,12 @@ final class Agent: NSObject {
             password = String(decoding: value, as: UTF8.self)
             return
         }
-        guard characteristic === statusCharacteristic, let value = characteristic.value,
-              let status = PhoneStatus(value), command != nil,
+        guard characteristic === statusCharacteristic, statusSubscription.acceptsValue,
+              let value = characteristic.value, command != nil,
+              let status = statusReceiver.receive(value, notification: statusSubscription.notification),
               recovery.receivedStatus(from: peripheral.identifier) else { return }
+        if let action = statusSubscription.readCompleted() { applyStatusAction(action) }
+        else if !statusReceiver.ready { applyStatusAction(statusSubscription.begin()) }
         Settings.preferredPhone = recovery.preferred
         central.stopScan()
         nextReadinessCheck = Date().addingTimeInterval(10)
@@ -485,6 +496,26 @@ final class Agent: NSObject {
         state.status = status
         control.refresh(state, receivedStatus: true)
         tick()
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard phone === peripheral, characteristic === statusCharacteristic else { return }
+        if let action = statusSubscription.changed(notifying: characteristic.isNotifying, failed: error != nil) {
+            applyStatusAction(action)
+        }
+    }
+
+    private func applyStatusAction(_ action: PhoneStatusSubscription.Action) {
+        guard let phone, let characteristic = statusCharacteristic else { return }
+        switch action {
+        case .unsubscribe: phone.setNotifyValue(false, for: characteristic)
+        case .read: phone.readValue(for: characteristic)
+        case .subscribe: phone.setNotifyValue(true, for: characteristic)
+        case .reconnect:
+            note("hotspot status subscription failed or stalled; reconnecting")
+            recovery.disconnected()
+            clearPhoneConnection()
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {

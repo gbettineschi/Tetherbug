@@ -71,3 +71,11 @@
 - Installed `0.1.12-wifi.1` at `/Applications/Tetherbug.app`; compressed 0.1.11 rollback retained under ignored `build/`. Spotlight lists one actual installed bundle. Existing managed login worker recovered automatically after signature-registration refresh and is running the new version.
 - Android diff is empty. Feature remains disabled and list empty.
 - UI verification is blocked by the locked Mac. Native saved-credential/enterprise joins, Location permission attribution between window and worker, VPN configurations, and cancellation of an OS join already submitted still require a real handover test. No release is published as part of this implementation.
+
+
+## Live-test follow-up
+
+- The existing-network path passed on the actual paired phone: the agent verified the selected home Wi-Fi over TLS, requested hotspot Off, and received the phone's Off confirmation.
+- The switch test exposed truncated Bluetooth status notifications: a 20-byte notification contains only 13 SSID bytes after the v3 header. Reconnecting and doing a full characteristic read returned the correct complete name. The short name caused an attempted join to a nonexistent SSID.
+- Added Mac-only full-metadata reception and an acknowledged unsubscribe/read/subscribe sequence, including a catch-up read after resubscribing. Preserve complete names across partial UTF-8 notifications. Reject malformed reads before marking the connection ready; subscription failures and timeouts use existing reconnection recovery. Seven regression tests bring the suite to 94 passing tests.
+- The corrected universal build is installed in place as 0.1.12-wifi.3. The Mac locked again during preparation; final bonded reconnect and hotspot-to-preferred-Wi-Fi switching remain pending unlock. Publishing remains conditional on the real switch passing.

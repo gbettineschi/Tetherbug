@@ -30,6 +30,9 @@ final class BluetoothCallbacks: NSObject, CBCentralManagerDelegate, CBPeripheral
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         if accepts() { agent?.peripheral(peripheral, didUpdateValueFor: characteristic, error: error) }
     }
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        if accepts() { agent?.peripheral(peripheral, didUpdateNotificationStateFor: characteristic, error: error) }
+    }
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if accepts() { agent?.peripheral(peripheral, didWriteValueFor: characteristic, error: error) }
     }

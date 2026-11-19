@@ -35,6 +35,82 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("metadata subscription waits for unsubscribe, full read and subscribe acknowledgements") {
+        var subscription = PhoneStatusSubscription()
+        expect(subscription.begin(now: now) == .unsubscribe, "fence old bonded notifications first")
+        expect(!subscription.acceptsValue && !subscription.ready, "ignore old values while stopping notifications")
+        expect(subscription.changed(notifying: false, failed: false) == .read, "read only after unsubscribe ACK")
+        expect(subscription.acceptsValue && !subscription.notification && !subscription.ready, "the full read is identifiable")
+        expect(subscription.readCompleted() == .subscribe, "subscribe after the read")
+        expect(!subscription.ready && !subscription.acceptsValue, "do not use an unacknowledged subscription")
+        expect(subscription.changed(notifying: true, failed: false) == .read, "catch up transitions during the read/subscribe gap")
+        expect(subscription.ready && subscription.notification, "now ordinary updates are accepted")
+        expect(subscription.due(now: now + 60) == nil, "no timeout after enable ACK")
+    }
+    test("failed or stalled metadata subscriptions reset the connection") {
+        for stage in ["unsubscribe", "read", "subscribe"] {
+            var subscription = PhoneStatusSubscription()
+            _ = subscription.begin(now: now)
+            if stage != "unsubscribe" { _ = subscription.changed(notifying: false, failed: false) }
+            if stage == "subscribe" { _ = subscription.readCompleted() }
+            expect(subscription.due(now: now + 9) == nil, "not timed out yet")
+            expect(subscription.due(now: now + 10) == .reconnect, "bounded \(stage)")
+            expect(!subscription.ready && subscription.due(now: now + 20) == nil, "one recovery action")
+        }
+        var failed = PhoneStatusSubscription()
+        _ = failed.begin(now: now)
+        expect(failed.changed(notifying: false, failed: true) == .reconnect, "explicit subscription failure recovers immediately")
+    }
+    test("malformed metadata cannot mark the read or subscription ready") {
+        var subscription = PhoneStatusSubscription()
+        var receiver = PhoneStatusReceiver()
+        _ = subscription.begin(now: now)
+        _ = subscription.changed(notifying: false, failed: false)
+        expect(receiver.receive(Data([255, 0]), notification: subscription.notification) == nil, "unsupported status rejected")
+        expect(!receiver.ready && !subscription.ready, "no readiness from malformed data")
+        expect(subscription.due(now: now + 10) == .reconnect, "read deadline still owns recovery")
+    }
+    test("short Bluetooth notifications preserve the full hotspot name from a read") {
+        var receiver = PhoneStatusReceiver()
+        let full = Data([3, 0, 80, 4, 1, 0, 0] + Array("Example phone's hotspot".utf8))
+        _ = receiver.receive(full, notification: false)
+        var short = Data(full.prefix(20))
+        short[2] = 79
+        let status = receiver.receive(short, notification: true)
+        expect(status?.ssid == "Example phone's hotspot", "notification cannot truncate the saved name")
+        expect(status?.battery == 79 && receiver.ready, "live fields still update without extra reads")
+    }
+    test("hotspot On refreshes metadata once and a resubscribe does not loop") {
+        var receiver = PhoneStatusReceiver()
+        let name = Array("Phone hotspot with long name".utf8)
+        _ = receiver.receive(Data([3, 0, 80, 4, 1, 0, 0] + name), notification: false)
+        let on = Data([3, 2, 80, 4, 1, 0x6c, 0x09] + name)
+        _ = receiver.receive(Data(on.prefix(20)), notification: true)
+        expect(!receiver.ready, "handover waits for a full read after hotspot On")
+        _ = receiver.receive(on, notification: false)
+        _ = receiver.receive(Data(on.prefix(20)), notification: true)
+        expect(receiver.ready, "one refresh per transition, not per resubscribe")
+    }
+    test("a changed hotspot name is confirmed by a read, including a real 13-byte name") {
+        var receiver = PhoneStatusReceiver()
+        let prefix = "1234567890123"
+        _ = receiver.receive(Data([3, 0, 80, 4, 1, 0, 0] + Array((prefix + " longer").utf8)), notification: false)
+        let new = Data([3, 2, 80, 4, 1, 0, 0] + Array(prefix.utf8))
+        _ = receiver.receive(new, notification: true)
+        expect(!receiver.ready, "same-prefix renames wait for full metadata")
+        expect(receiver.receive(new, notification: false)?.ssid == prefix && receiver.ready,
+               "an actual short SSID is accepted from the read")
+        let changed = Data([3, 2, 80, 4, 1, 0, 0] + Array("Other phone".utf8))
+        _ = receiver.receive(changed, notification: true)
+        expect(!receiver.ready, "a different prefix also requires a read")
+    }
+    test("truncated UTF-8 notifications cannot corrupt the confirmed hotspot name") {
+        var receiver = PhoneStatusReceiver()
+        let name = "123456789012é hotspot"
+        let full = Data([3, 0, 80, 4, 1, 0, 0] + Array(name.utf8))
+        _ = receiver.receive(full, notification: false)
+        expect(receiver.receive(Data(full.prefix(20)), notification: true)?.ssid == name, "compare raw SSID bytes")
+    }
     test("preferred network names preserve exact SSIDs and reject invalid entries") {
         expect(WifiNetworkNames.error(for: "", existing: [], hotspot: nil) != nil, "empty name rejected")
         expect(WifiNetworkNames.error(for: String(repeating: "é", count: 17), existing: [], hotspot: nil) != nil,
