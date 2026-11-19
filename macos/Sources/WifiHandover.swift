@@ -159,7 +159,9 @@ final class WifiHandover {
     }
 
     private func settle(_ target: String) {
-        phase = .settling(target, now().addingTimeInterval(20))
+        // Enterprise authentication and DHCP can take over a minute after association succeeds.
+        // Keep the hotspot available throughout; never tear the working connection down first.
+        phase = .settling(target, now().addingTimeInterval(90))
         stableSince = context().currentSSID == target && context().wifiConnected ? now() : nil
         report("Checking \(target)…")
     }

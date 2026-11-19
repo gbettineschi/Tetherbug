@@ -79,3 +79,10 @@
 - The switch test exposed truncated Bluetooth status notifications: a 20-byte notification contains only 13 SSID bytes after the v3 header. Reconnecting and doing a full characteristic read returned the correct complete name. The short name caused an attempted join to a nonexistent SSID.
 - Added Mac-only full-metadata reception and an acknowledged unsubscribe/read/subscribe sequence, including a catch-up read after resubscribing. Preserve complete names across partial UTF-8 notifications. Reject malformed reads before marking the connection ready; subscription failures and timeouts use existing reconnection recovery. Seven regression tests bring the suite to 94 passing tests.
 - The corrected universal build is installed in place as 0.1.12-wifi.3. The Mac locked again during preparation; final bonded reconnect and hotspot-to-preferred-Wi-Fi switching remain pending unlock. Publishing remains conditional on the real switch passing.
+
+
+## Enterprise-network timing follow-up
+
+- The corrected build connected the Mac to the actual phone hotspot, discovered the selected campus Wi-Fi and joined it using macOS's stored credentials. The gateway changed away from the campus network and subsequently returned, confirming a real network switch.
+- Campus authentication/DHCP finished after the original 20-second settling deadline. The safety behaviour worked: the app kept the hotspot on instead of claiming successful internet access. Extend the bounded association wait to 90 seconds and cover a connection becoming usable after 65 seconds with a failing-then-passing regression.
+- Suite now passes 95 Mac tests plus three release-source guard tests. The universal 0.1.12 release candidate is installed for the final repeated device test. Android changes for this release are version metadata only (112); no phone installation is performed.

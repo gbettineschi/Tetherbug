@@ -286,10 +286,21 @@ func runWifiHandoverTests() {
         f.context.wifiConnected = false; f.service.verified?(true)
         expect(f.offs == 0, "connected path must still be present")
     }
+    test("enterprise Wi-Fi can finish authentication and DHCP after twenty seconds") {
+        let f = HandoverFixture()
+        f.startJoin(); f.service.joined?(true)
+        f.context.currentSSID = "Home"; f.context.wifiConnected = false
+        f.date += 25; f.handover.tick()
+        expect(f.handover.busy && f.service.joins == ["Home"], "do not interrupt enterprise authentication")
+        f.date += 40; f.context.wifiConnected = true; f.handover.tick(); f.settle()
+        expect(f.service.probes == 1, "verify after the enterprise connection becomes usable")
+        f.service.verified?(true)
+        expect(f.offs == 1, "late successful connection permits Off")
+    }
     test("a successful join without actual association times out safely") {
         let f = HandoverFixture()
         f.startJoin(); f.service.joined?(true)
-        f.date += 21; f.handover.tick()
+        f.date += 91; f.handover.tick()
         expect(f.offs == 0 && !f.handover.busy, "bounded association wait")
     }
     test("a transient association cannot satisfy the stability interval") {
