@@ -1,5 +1,14 @@
 import Foundation
 
+enum WifiNetworkNames {
+    static func error(for name: String, existing: [String], hotspot: String?) -> String? {
+        if name.isEmpty || name.utf8.count > 32 { return "Enter a Wi-Fi name of 1–32 bytes." }
+        if name == hotspot { return "Choose a network other than your phone’s hotspot." }
+        if existing.contains(name) { return "This network is already in the list." }
+        return nil
+    }
+}
+
 /// Effects run asynchronously; cancellation must invalidate their outstanding callbacks too.
 protocol WifiHandoverService: AnyObject {
     func scan(_ completion: @escaping (Set<String>) -> Void)
@@ -23,7 +32,9 @@ final class WifiHandover {
         var wifiPoweredOn: Bool
         var locationAllowed: Bool
 
-        var candidates: [String] { preferred.filter { !$0.isEmpty && $0 != hotspotSSID } }
+        var candidates: [String] {
+            preferred.filter { WifiNetworkNames.error(for: $0, existing: [], hotspot: hotspotSSID) == nil }
+        }
         var canRun: Bool {
             allowed && enabled && automaticActive && hotspotOn && canControlHotspot &&
                 wifiPoweredOn && locationAllowed && hotspotSSID?.isEmpty == false && !candidates.isEmpty

@@ -55,6 +55,26 @@ running. Open Tetherbug once from Applications so macOS asks for Bluetooth acces
 
 Use this fork’s release downloads to retain the patches. See [personal releases](personal-releases.md) for signing and update details. Do not use the original author’s Homebrew cask: it installs upstream builds.
 
+### Return from the hotspot to preferred Wi-Fi (Mac only)
+
+In Tetherbug Settings, enable **Return to preferred Wi-Fi**, allow Wi-Fi network access, and add
+your home, university or other saved networks. You can choose **Add Saved Network…**, **Use Current
+Network**, or type the exact Wi-Fi name. Connect to a new network normally in macOS once before
+adding it here; Tetherbug uses macOS’s saved credentials and does not collect passwords.
+
+While the Mac is fully awake, Automatic Mode is active and the phone hotspot is on, Tetherbug
+checks for listed networks at most once per minute. It tries them in list order when using the
+phone’s hotspot or when Wi-Fi is disconnected, leaving an unrelated working Wi-Fi connection alone.
+After joining, it waits three seconds for a stable connection and checks Apple’s HTTPS connectivity
+endpoint over Wi-Fi. Only then does it turn off the hotspot. This also works if macOS joins a listed
+network itself. Captive portals and failed internet checks keep the hotspot on; an unsuccessful
+handover attempts to return to the hotspot and backs off that candidate for five minutes.
+
+macOS requires Location permission for Wi-Fi names. Tetherbug requests permission only from Settings
+and never requests location updates. Automatic-mode pauses apply to handover too; sleep and DarkWake
+cancel pending work. This is entirely Mac-side: the Android app needs no update. Network switching
+can briefly interrupt transfers, so pause Automatic Mode while you need to stay on the hotspot.
+
 ### From the releases page
 
 Download `Tetherbug-v<version>.zip` from the

@@ -38,6 +38,12 @@ final class Agent: NSObject {
     private var menuBar: MenuBarController?
     private var wifi: NWPathMonitor?
     private let scanQueue = DispatchQueue(label: "ie.xav.tetherbug.scan")
+    private var wifiPathConnected = false
+    private lazy var wifiService = MacWifiHandoverService(activity: activity, queue: scanQueue)
+    private lazy var handover = WifiHandover(service: wifiService,
+        context: { [unowned self] in self.handoverContext() },
+        turnOff: { [weak self] in self?.request(false, reason: "preferred Wi-Fi verified") },
+        report: { [weak self] in self?.state.wifiHandoverMessage = $0 })
     private var offlineSince: Date?
     private var backoff: TimeInterval = 2
     private var nextRetry = Date.distantPast
@@ -181,6 +187,8 @@ final class Agent: NSObject {
     }
 
     private func suspendRadio() {
+        handover.cancel()
+        wifiPathConnected = false
         maintenance?.invalidate()
         maintenance = nil
         pendingFullScan?.cancel()
@@ -199,6 +207,7 @@ final class Agent: NSObject {
     }
 
     private func wifiChanged(_ path: NWPath) {
+        wifiPathConnected = path.status == .satisfied
         let poweredOn = CWWiFiClient.shared().interface()?.powerOn() ?? false
         let offline = poweredOn && path.status != .satisfied
         if offline != state.wifiOffline { note(offline ? "Wi-Fi lost" : "Wi-Fi connected") }
@@ -227,6 +236,7 @@ final class Agent: NSObject {
         }
         control.refresh(state)
         publishControl()
+        handover.tick()
         if control.needsReconnect {
             if state.stopping != true, !reconnectRequested, let phone {
                 reconnectRequested = true
@@ -234,7 +244,7 @@ final class Agent: NSObject {
             }
             return
         }
-        guard state.stopping != true, control.shouldAutomaticallyEnable(state),
+        guard state.stopping != true, !handover.busy, control.shouldAutomaticallyEnable(state),
               command != nil, offlineSince != nil, Date() >= nextRetry else { return }
         request(true, reason: "no Wi-Fi")
         nextRetry = Date().addingTimeInterval(backoff)
@@ -243,6 +253,7 @@ final class Agent: NSObject {
 
     func request(_ on: Bool, reason: String) {
         guard radioAllowed() else { return }
+        handover.cancel()
         state.lastRequest = "\(on ? "enable" : "disable") (\(reason)) at \(ISO8601DateFormatter().string(from: Date()))"
         guard let phone, let command else {
             note("\(on ? "enable" : "disable") requested (\(reason)) but the phone isn't connected")
@@ -258,6 +269,7 @@ final class Agent: NSObject {
 
     private func toggleFromMenu() {
         guard radioAllowed() else { return }
+        handover.cancel()
         guard let phone, let command, let on = control.toggle(state) else { return }
         state.lastRequest = "\(on ? "enable" : "disable") (menu) at \(ISO8601DateFormatter().string(from: Date()))"
         // Publish the pause before issuing Off, so no retry can immediately turn it back on.
@@ -273,10 +285,24 @@ final class Agent: NSObject {
     }
 
     private func automaticControlChanged() {
+        handover.cancel()
         publishControl()
         backoff = 2
         nextRetry = max(Date(), (offlineSince ?? Date()).addingTimeInterval(TimeInterval(Settings.disconnectWait)))
         tick()
+    }
+
+    private func handoverContext() -> WifiHandover.Context {
+        let enabled = Settings.returnToPreferredWifi
+        let networks = Settings.preferredWifiNetworks
+        // Opting out keeps the existing trigger's cost and permission behaviour unchanged.
+        let interface = enabled && !networks.isEmpty ? CWWiFiClient.shared().interface() : nil
+        return .init(allowed: activity.allows(activity.generation) && state.stopping != true,
+            enabled: enabled, automaticActive: control.automaticActive(), preferred: networks,
+            currentSSID: interface?.ssid(), wifiConnected: wifiPathConnected,
+            hotspotSSID: state.status?.ssid, hotspotOn: state.status?.hotspot == .on,
+            canControlHotspot: control.canToggle(state), wifiPoweredOn: interface?.powerOn() == true,
+            locationAllowed: enabled && !networks.isEmpty && wifiService.locationAllowed)
     }
 
     private func publishControl() {

@@ -35,6 +35,34 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("preferred network names preserve exact SSIDs and reject invalid entries") {
+        expect(WifiNetworkNames.error(for: "", existing: [], hotspot: nil) != nil, "empty name rejected")
+        expect(WifiNetworkNames.error(for: String(repeating: "é", count: 17), existing: [], hotspot: nil) != nil,
+               "32-byte limit counts UTF-8 bytes")
+        expect(WifiNetworkNames.error(for: "Home", existing: ["Home"], hotspot: nil) != nil, "duplicate rejected")
+        expect(WifiNetworkNames.error(for: "Test hotspot", existing: [], hotspot: "Test hotspot") != nil, "phone rejected")
+        expect(WifiNetworkNames.error(for: " Home ", existing: ["Home"], hotspot: nil) == nil, "SSID spaces are significant")
+        expect(WifiNetworkNames.error(for: "home", existing: ["Home"], hotspot: nil) == nil, "SSID case is significant")
+    }
+    test("internet verification accepts only the expected successful Apple response") {
+        let success = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"
+        expect(MacWifiHandoverService.isInternetSuccess(Data(success.utf8)), "expected HTML success")
+        for response in ["HTTP/1.1 302 Found\r\n\r\n<BODY>Success</BODY>",
+                         "HTTP/1.1 200 OK\r\n\r\nPlease sign in",
+                         "HTTP/1.1 500 Error\r\n\r\n<TITLE>Success</TITLE><BODY>Success</BODY>",
+                         "HTTP/1.1 200 OK\r\nX-Test: <BODY>Success</BODY>\r\n\r\nLogin"] {
+            expect(!MacWifiHandoverService.isInternetSuccess(Data(response.utf8)), "redirect/captive/error/header spoof rejected")
+        }
+    }
+    test("handover shares the existing automatic mode and timed pause policy") {
+        let (control, _) = environment()
+        expect(control.automaticActive(now: now), "default automatic enabled")
+        control.pauseAutomatic(for: .minutes15, now: now)
+        expect(!control.automaticActive(now: now), "pause suspends handover")
+        expect(control.automaticActive(now: now + 900), "expiry resumes handover")
+        control.automatic = false
+        expect(!control.automaticActive(now: now + 900), "disabled mode stays disabled")
+    }
     test("handover joins a listed network before verifying internet and sending Off") {
         let f = HandoverFixture()
         f.startJoin()

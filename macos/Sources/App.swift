@@ -431,6 +431,8 @@ struct ContentView: View {
                 }
             }
 
+            PreferredWifiSection(hotspotSSID: phone?.ssid, message: state?.wifiHandoverMessage)
+
             Section("General") {
                 if let job = state?.managedBy {
                     LabeledContent("Launch at login", value: job.hasPrefix("org.nixos.") ? "Managed by Nix" : "Managed by launchd")

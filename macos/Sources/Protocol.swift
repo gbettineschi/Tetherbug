@@ -54,6 +54,8 @@ struct AgentState: Codable, Equatable {
     var automaticSuspended: Bool { automaticPausedUntil != nil }
     var requestPending: Bool?
     var requestError: String?
+    /// Optional Mac-only Wi-Fi handover progress; absent in older agents.
+    var wifiHandoverMessage: String?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
     /// Only the session worker's direct reply to `handover` can accept a transfer.
@@ -73,6 +75,16 @@ struct AgentState: Codable, Equatable {
 /// binary is launched (inside the bundle or through a symlink).
 enum Settings {
     static let defaults = UserDefaults(suiteName: "ie.xav.tetherbug.settings") ?? .standard
+
+    static var returnToPreferredWifi: Bool {
+        get { defaults.bool(forKey: "returnToPreferredWifi") }
+        set { defaults.set(newValue, forKey: "returnToPreferredWifi") }
+    }
+
+    static var preferredWifiNetworks: [String] {
+        get { defaults.stringArray(forKey: "preferredWifiNetworks") ?? [] }
+        set { defaults.set(newValue, forKey: "preferredWifiNetworks") }
+    }
 
     static var preferredPhone: UUID? {
         get { defaults.string(forKey: "preferredPhone").flatMap(UUID.init(uuidString:)) }

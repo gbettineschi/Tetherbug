@@ -110,8 +110,12 @@ final class HotspotControl {
         return true
     }
 
+    func automaticActive(now: Date = Date()) -> Bool {
+        automatic && (pausedUntil.map { $0 <= now } ?? true)
+    }
+
     func shouldAutomaticallyEnable(_ state: AgentState, now: Date = Date()) -> Bool {
-        automatic && (pausedUntil.map { $0 <= now } ?? true) && state.wifiOffline &&
+        automaticActive(now: now) && state.wifiOffline &&
             canToggle(state) && state.status?.hotspot != .on
     }
 
