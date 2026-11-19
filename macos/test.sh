@@ -31,5 +31,6 @@ swiftc -target "$(uname -m)-apple-macos14.0" "$here/Sources/Protocol.swift" "$he
   "$here/Sources/SystemPowerMonitor.swift" "$here/Sources/BluetoothCallbacks.swift" \
   "$here/Tests/PowerActivityTests.swift" "$here/Tests/MenuBarTests.swift" "$here/Tests/BluetoothRecoveryTests.swift" \
   "$here/Sources/WifiHandover.swift" "$here/Sources/MacWifi.swift" "$here/Sources/WifiPreferencesView.swift" \
+  "$here/Sources/NativeWifiAssociation.swift" \
   "$here/Tests/WifiHandoverTests.swift" "$here/Tests/main.swift" -o "$work/tests"
 "$work/tests"

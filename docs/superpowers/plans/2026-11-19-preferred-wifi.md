@@ -86,3 +86,13 @@
 - The corrected build connected the Mac to the actual phone hotspot, discovered the selected campus Wi-Fi and joined it using macOS's stored credentials. The gateway changed away from the campus network and subsequently returned, confirming a real network switch.
 - Campus authentication/DHCP finished after the original 20-second settling deadline. The safety behaviour worked: the app kept the hotspot on instead of claiming successful internet access. Extend the bounded association wait to 90 seconds and cover a connection becoming usable after 65 seconds with a failing-then-passing regression.
 - Suite now passes 95 Mac tests plus three release-source guard tests. The universal 0.1.12 release candidate is installed for the final repeated device test. Android changes for this release are version metadata only (112); no phone installation is performed.
+
+
+## Correction after owner-observed connection failures
+
+- Do not treat the earlier eventual-return test as a clean handover. Unified logs show the legacy command associated with campus Wi-Fi without starting 802.1X; about 64 seconds later native auto-join started the EAP client, authenticated in about 0.4 seconds, and acquired IPv4 in about 0.2 seconds. The longer wait masked this backend defect.
+- During the incomplete join, native hotspot clicks failed before authentication: kernel scan logs say `join manager is busy`, and ControlCenter reports ENETUNREACH. An earlier cached-hotspot failure family followed the local test watcher's explicit cleanup Off; those failures are not evidence of wrong credentials or Bluetooth interference.
+- Replace `networksetup` with CoreWiFi association using the exact scanned result and existing known profile; retain complete EAP configuration, leave credentials inside macOS and suppress credential prompts. Runtime availability and exact SSID/profile checks fail closed. The project already uses CoreWiFi for its channel scanner.
+- A logical timeout retains the native operation until its natural reply and rejects competing joins. Before sleep, cancel the owned request and suppress callbacks; only a fresh full-wake lifecycle resets a cancelled in-flight lease. An OS cancellation acknowledgement is not proof that radio association has physically stopped.
+- Three profile tests, one default-EAP test, and two ownership tests bring the suite to 101 passing Mac tests. A local `connect-hotspot` diagnostic uses the same native backend only while preferred handover is held, and is blocked in sleep/DarkWake.
+- Native-profile candidate installed at the single application path. Final hardware timing test is pending Mac unlock; release remains on hold. No Android runtime changes or phone installation.

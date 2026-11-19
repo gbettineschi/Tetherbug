@@ -127,6 +127,18 @@ final class Agent: NSObject {
         case "toggle": toggleFromMenu()
         case "automatic on": setAutomatic(true)
         case "automatic off": setAutomatic(false)
+        case "connect-hotspot":
+            // Local diagnostic/manual join. Hold preferred handover first, so it cannot race
+            // the explicit connection request; reuse the same native saved-profile backend.
+            guard radioAllowed(), !Settings.returnToPreferredWifi, state.connected,
+                  state.status?.hotspot == .on, statusReceiver.ready, statusSubscription.ready,
+                  let ssid = state.status?.ssid, !ssid.isEmpty else { return state }
+            handover.cancel()
+            state.wifiHandoverMessage = "Connecting to the phone’s hotspot…"
+            wifiService.join(ssid) { [weak self] success in
+                guard let self, self.radioAllowed() else { return }
+                self.state.wifiHandoverMessage = success ? nil : "Couldn’t join the phone’s hotspot."
+            }
         case "quit": quit()
         case "handover":
             guard !isLoginAgent, state.managedBy == nil, !exiting else { return state }
@@ -166,6 +178,7 @@ final class Agent: NSObject {
     }
 
     private func resumeRadio() {
+        wifiService.resumeAfterSleep()
         let token = activity.generation
         recovery.restart()
         offlineSince = nil
@@ -192,6 +205,7 @@ final class Agent: NSObject {
 
     private func suspendRadio() {
         handover.cancel()
+        wifiService.suspend()
         wifiPathConnected = false
         wifiInterface = nil
         maintenance?.invalidate()

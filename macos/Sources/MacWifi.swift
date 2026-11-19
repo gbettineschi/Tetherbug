@@ -15,19 +15,22 @@ enum WifiAccess {
 }
 
 /// Main-queue owner of cancellable native operations. Blocking scans share the agent's scan queue.
-/// Saved credentials stay inside macOS; networksetup asks its Wi-Fi service to join a known SSID.
+/// Saved credentials stay inside macOS's native known-profile association path.
 final class MacWifiHandoverService: WifiHandoverService {
     private let activity: PowerActivity
     private let queue: DispatchQueue
     private let wifiInterface: () -> NWInterface?
     private let lock = NSLock()
     private var epoch: UInt64 = 0
-    private var process: Process?
+    private lazy var association = NativeWifiAssociation(queue: queue)
     private var connection: NWConnection?
     private var timeout: DispatchWorkItem?
     private lazy var location = CLLocationManager()
 
     var locationAllowed: Bool { WifiAccess.authorized(location.authorizationStatus) }
+
+    func suspend() { cancel(); association.suspend() }
+    func resumeAfterSleep() { association.resumeAfterSleep() }
 
     init(activity: PowerActivity, queue: DispatchQueue, wifiInterface: @escaping () -> NWInterface?) {
         self.activity = activity
@@ -39,8 +42,7 @@ final class MacWifiHandoverService: WifiHandoverService {
         lock.withLock { epoch &+= 1 }
         timeout?.cancel()
         timeout = nil
-        if let process, process.isRunning { process.terminate() }
-        process = nil
+        association.cancel()
         connection?.stateUpdateHandler = nil
         connection?.cancel()
         connection = nil
@@ -57,7 +59,7 @@ final class MacWifiHandoverService: WifiHandoverService {
 
     func scan(_ completion: @escaping (Set<String>) -> Void) {
         let token = begin()
-        guard allows(token), locationAllowed else { completion([]); return }
+        guard allows(token), locationAllowed, !association.pending else { completion([]); return }
         queue.async { [weak self] in
             guard let self, self.allows(token) else { return }
             guard let interface = CWWiFiClient.shared().interface(), interface.powerOn() else {
@@ -80,34 +82,19 @@ final class MacWifiHandoverService: WifiHandoverService {
         guard allows(token), locationAllowed, let interface = CWWiFiClient.shared().interface(),
               interface.powerOn(), WifiAccess.savedNetworks(interface).contains(ssid),
               let device = interface.interfaceName else { completion(false); return }
-        let child = Process()
-        child.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        // Structured arguments preserve spaces, quotes and shell metacharacters in network names.
-        // No password argument: only macOS's saved credentials may be used.
-        child.arguments = ["-setairportnetwork", device, ssid]
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-        process = child
-        child.terminationHandler = { [weak self] child in
-            DispatchQueue.main.async {
-                guard let self, self.allows(token) else { return }
-                self.timeout?.cancel()
-                self.timeout = nil
-                self.process = nil
-                // The policy still requires the actual SSID, stable path and successful TLS probe.
-                completion(child.terminationStatus == 0)
-            }
-        }
-        guard allows(token) else { return }
-        do { try child.run() }
-        catch { process = nil; completion(false); return }
         let expiry = DispatchWorkItem { [weak self] in
             guard let self, self.allows(token) else { return }
             self.cancel()
             completion(false)
         }
         timeout = expiry
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: expiry)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: expiry)
+        association.join(ssid, device: device, allowed: { [weak self] in self?.allows(token) == true }) { [weak self] success in
+            guard let self, self.allows(token) else { return }
+            self.timeout?.cancel()
+            self.timeout = nil
+            completion(success)
+        }
     }
 
     /// TLS authenticates the endpoint; requiring the Wi-Fi interface prevents Ethernet or a VPN

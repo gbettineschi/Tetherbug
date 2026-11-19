@@ -1,5 +1,14 @@
 import Foundation
 
+private final class SavedProfileFake: NSObject, NSCopying {
+    @objc dynamic var SSID: Data
+    @objc dynamic var EAPProfile: [String: Any]?
+    init(ssid: String, eap: [String: Any]? = nil) { SSID = Data(ssid.utf8); EAPProfile = eap }
+    func copy(with zone: NSZone? = nil) -> Any {
+        SavedProfileFake(ssid: String(decoding: SSID, as: UTF8.self), eap: EAPProfile)
+    }
+}
+
 private final class HandoverServiceFake: WifiHandoverService {
     var scans = 0
     var joins: [String] = []
@@ -35,6 +44,49 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("timed out native joins retain ownership until their natural reply") {
+        var state = WifiAssociationState()
+        state.submitted = true
+        state.abandon()
+        expect(state.pending && !state.canDeliver, "cancellation is not proof the daemon stopped")
+        expect(!state.complete() && !state.pending, "stale natural reply clears the barrier without advancing policy")
+        expect(!state.complete(), "a duplicate callback cannot deliver")
+    }
+    test("sleep cancellation requires full-wake reset for an already submitted native join") {
+        var state = WifiAssociationState()
+        state.submitted = true
+        state.abandon(forSleep: true)
+        expect(!state.complete() && state.pending, "a cancellation ACK cannot release an active native join")
+        var queued = WifiAssociationState()
+        queued.abandon(forSleep: true)
+        expect(!queued.complete() && !queued.pending, "unsubmitted work can be discarded immediately")
+    }
+    test("saved enterprise joins preserve the native EAP profile without allowing credential prompts") {
+        let original = SavedProfileFake(ssid: "Campus", eap: ["AcceptEAPTypes": [25],
+            "TLSTrustedServerNames": ["radius.example.test"], "UserName": "test-user"])
+        let copied = NativeWifiAssociation.profileForAssociation(original, ssid: Data("Campus".utf8)) as? SavedProfileFake
+        expect(copied != nil && copied !== original, "prepare an in-memory copy, never modify the saved profile")
+        expect(copied?.EAPProfile?["DisableUserInteraction"] as? Bool == true, "expired credentials fail without a new password dialog")
+        expect(copied?.EAPProfile?["AcceptEAPTypes"] as? [Int] == [25], "preserve PEAP selection")
+        expect(copied?.EAPProfile?["TLSTrustedServerNames"] as? [String] == ["radius.example.test"], "preserve server trust configuration")
+        expect(original.EAPProfile?["DisableUserInteraction"] == nil, "native saved settings stay unchanged")
+    }
+    test("native joins reject a mismatched saved profile before touching the connection") {
+        let profile = SavedProfileFake(ssid: "Campus")
+        expect(NativeWifiAssociation.profileForAssociation(profile, ssid: Data("Other".utf8)) == nil, "exact saved SSID required")
+        expect(NativeWifiAssociation.profileForAssociation(NSObject(), ssid: Data("Campus".utf8)) == nil, "unknown runtime types fail closed")
+    }
+    test("saved personal profiles do not acquire new enterprise configuration") {
+        let profile = SavedProfileFake(ssid: "Home")
+        let copied = NativeWifiAssociation.profileForAssociation(profile, ssid: Data("Home".utf8)) as? SavedProfileFake
+        expect(copied != nil && copied?.EAPProfile == nil, "leave password handling inside macOS")
+    }
+    test("enterprise profiles using system defaults still suppress credential dialogs") {
+        let profile = SavedProfileFake(ssid: "Campus")
+        let copied = NativeWifiAssociation.profileForAssociation(profile, ssid: Data("Campus".utf8), enterprise: true) as? SavedProfileFake
+        expect(copied?.EAPProfile?["DisableUserInteraction"] as? Bool == true, "unattended flag is required even with no explicit EAP dictionary")
+        expect(profile.EAPProfile == nil, "do not persist invented authentication settings")
+    }
     test("metadata subscription waits for unsubscribe, full read and subscribe acknowledgements") {
         var subscription = PhoneStatusSubscription()
         expect(subscription.begin(now: now) == .unsubscribe, "fence old bonded notifications first")

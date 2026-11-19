@@ -63,3 +63,12 @@ After changing the setup screen, regenerate them (`just store` also re-renders t
 ```bash
 just android-shots
 ```
+
+
+### Native hotspot join diagnostics
+
+The local agent socket accepts `connect-hotspot` for a controlled manual/native join. Temporarily
+hold Preferred Wi-Fi handover first. The paired phone must report its hotspot On with complete
+metadata, and the hotspot network must already be saved in macOS. The command uses the same native
+saved-profile association backend as preferred handover, and cannot operate in sleep or DarkWake.
+It does not read or log passwords. Restore Preferred Wi-Fi after the test.
