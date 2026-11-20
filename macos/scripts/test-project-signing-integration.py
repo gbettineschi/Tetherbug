@@ -59,6 +59,8 @@ def main():
         try:
             run(['security', 'create-keychain', '-p', password, str(keychain)])
             run(['security', 'unlock-keychain', '-p', password, str(keychain)])
+            # Use the native exporter used for the retained identity. Homebrew OpenSSL 3
+            # defaults can produce PKCS12 containers rejected by Apple's keychain importer.
             certs = []
             for number in (1, 2):
                 directory = root / f'cert{number}'
@@ -68,15 +70,15 @@ def main():
                                   '[dn]\nCN=Tetherbug Ephemeral Fixture\n[ext]\nbasicConstraints=critical,CA:FALSE\n'
                                   'keyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n')
                 pem, key, p12 = (directory / name for name in ('cert.pem', 'key.pem', 'fixture.p12'))
-                run(['openssl', 'req', '-new', '-newkey', 'rsa:2048', '-x509', '-sha256', '-nodes', '-days', '1',
+                run(['/usr/bin/openssl', 'req', '-new', '-newkey', 'rsa:2048', '-x509', '-sha256', '-nodes', '-days', '1',
                      '-config', str(config), '-keyout', str(key), '-out', str(pem)])
                 key.chmod(0o600)
                 environment = os.environ.copy()
                 environment['TETHERBUG_FIXTURE_PASSWORD'] = password
-                run(['openssl', 'pkcs12', '-export', '-inkey', str(key), '-in', str(pem), '-out', str(p12),
+                run(['/usr/bin/openssl', 'pkcs12', '-export', '-inkey', str(key), '-in', str(pem), '-out', str(p12),
                      '-passout', 'env:TETHERBUG_FIXTURE_PASSWORD'], env=environment)
                 run(['security', 'import', str(p12), '-k', str(keychain), '-P', password, '-T', '/usr/bin/codesign'])
-                der = subprocess.run(['openssl', 'x509', '-in', str(pem), '-outform', 'DER'], check=True, capture_output=True).stdout
+                der = subprocess.run(['/usr/bin/openssl', 'x509', '-in', str(pem), '-outform', 'DER'], check=True, capture_output=True).stdout
                 certs.append((hashlib.sha1(der).hexdigest(), hashlib.sha256(der).hexdigest()))
             apps = []
             script = Path(__file__).with_name('sign-app.sh')
