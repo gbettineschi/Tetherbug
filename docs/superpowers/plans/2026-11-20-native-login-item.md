@@ -24,3 +24,7 @@ Signed trials D/E, a 15-second settlement, root-preserving replacement, per-app 
 - Native suite: 112 tests passed, including migration ownership/consent/power, hidden-login AppleEvent recognition, normal close/Quit and bounded child launch failures. Local tests left the installed app/phone connection running. Signed F/G and physical login remain unverified at this point.
 
 - Scoped review found that a connected socket with no readiness snapshot bypassed the polling deadline. A deterministic blocked-watcher regression failed (113 tests, one failure). Deferred normal close now has its own generation-checked timeout; a stale timer cannot cancel a completed/new close. Timeout refuses termination and only reveals Settings in FullWake.
+
+## Device acceptance
+
+F (0.1.12-signing.6,7f19db5) and G (0.1.12-signing.7,28f64e2) each passed a changed signed in-place installation, live S23 connection (~2s), native login enabled / legacy disabled, and60s observation with zero new crash reports. F retained the worker after Settings closed and verified current Wi-Fi internet before confirmed phone Off. The final source has113 native tests passing, with CI/Lint green. Physical logout/reboot and a directly observed final CmdQ keypress were not performed; the latter UI attempt failed screen capture. No global security, TCC or BTM reset was used.
