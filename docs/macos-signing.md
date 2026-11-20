@@ -2,7 +2,7 @@
 
 ## Signing activated; installed-update acceptance pending
 
-The installed build and public releases through 0.1.11 are ad-hoc signed. The build hash changes with updates, so macOS can require privacy approval again. A reboot alone does not change a signature. A prior installation or stale helper registration can make the mismatch appear at the next startup.
+Public releases through 0.1.11 are ad-hoc signed. The owner’s Mac now has the first permanently signed trial, 0.1.12-signing.1, installed in place. The build hash changes with updates, so macOS can require privacy approval again. A reboot alone does not change a signature. A prior installation or stale helper registration can make the mismatch appear at the next startup.
 
 The owner requested the free project-certificate approach already tested for Keepresso Mobile. Tetherbug uses its own certificate and unchanged bundle identifier, `ie.xav.tetherbug`. The default designated requirement must be exactly that identifier AND the certificate leaf fingerprint. Never substitute an identifier-only or hash-based requirement. No paid Apple membership is needed; this does not provide Developer ID or notarization. Gatekeeper remains enforced.
 
@@ -39,3 +39,9 @@ References: [Apple TN3127](https://developer.apple.com/documentation/technotes/t
 - SHA-256: `9d1cf43945edd110ac5e5463699c116ff5313c8ea766f1dff16dfb12a00e6015`.
 - Valid 20 November 2026 through 20 November 2029, 13:00:40 UTC.
 - Protected environment and exact refs verified before upload; all three secret names verified afterward. Real installed-update permission retention is still pending.
+
+## Hosted and local acceptance status — 20 November 2026
+
+Both exact-source Mac-only trial workflows completed successfully using the retained certificate: [A](https://github.com/gbettineschi/Tetherbug/actions/runs/44744428908), [B](https://github.com/gbettineschi/Tetherbug/actions/runs/44744873344). The actual temporary-certificate integration also passed on the hosted runner. The fixture uses the native Mac exporter; Homebrew OpenSSL defaults produced an incompatible test PKCS12. Earlier macos-15 identity-lookup failures are recorded observations, not proof of an OS defect.
+
+A is installed at the single canonical path. Managed startup is running, pairing is preserved and live S23 Bluetooth status is usable. Initial Wi-Fi identification/verification has not yet been established; the owner has been asked to check the Wi-Fi/Location permission in Settings. B is downloaded and strictly verified: same exact signer/DR, different signed bytes. B installation is held until A has usable grants, so retention can be tested rather than assumed. No release or tap update has been published.

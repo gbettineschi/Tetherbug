@@ -29,3 +29,10 @@ Ruling: Existing feature worktree is isolated and reused; implementation is auth
 - The macos-15 runner imports both retained and ephemeral identities but signing reports that the specified keychain item cannot be found. The same actual fixture passes locally. No installer was produced or installed, and cleanup succeeded.
 - Safe diagnostics disclose only fixed tool/operation labels for production signing; keyless ephemeral fixtures also report password-redacted tool errors. Regression tests cover redaction.
 - Ruling: align both keyless Mac build/self-test and the fresh signing-only job with Keepresso’s verified hosted `xcode-27` runner; its successful trial job metadata confirms GitHub-hosted execution. Preserve the retained identity, strict requirement and protected environment. Do not change trust or guess at key/ACL replacements. Confirm with the actual fixture before loading production keys.
+
+## Signed A/B ready; initial grant handoff
+
+- Hosted actual fixture and both retained-key signing workflows passed at source a9a0a49. A installed in place; one actual app, managed service running, pairing retained, Bluetooth live.
+- B downloaded and checked against public certificate, source, receipt hash and strict code signature. Same DR, different signed bytes. No B install yet: establish A’s usable Wi-Fi grant first.
+- A’s existing-network Wi-Fi check did not complete; restored phone hotspot Off, held handover and cleared the test-created pause. Asked owner to enable Preferred Wi-Fi and check initial Location access; CUA screen capture unavailable.
+- Remaining: A Wi-Fi usable, B installation plus actual grant retention, real Bocconi switch. Release/merge remain held.
