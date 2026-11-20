@@ -72,5 +72,16 @@ class CISigningTests(unittest.TestCase):
             ci.sign('candidate.zip','signed.zip','a'*40,self.environment,runner=self.runner,packager=failed)
         self.assertFalse((self.root/'tetherbug-project-signing').exists())
 
+    def test_failure_reports_only_a_safe_tool_operation(self):
+        import contextlib, io
+        from unittest.mock import patch
+        for reason, expected in [('Signing tool security/import failed (exit 1)', 'security/import'),
+                                 ('unexpected private fixture password', 'Project signing failed')]:
+            errors=io.StringIO()
+            with patch.object(ci,'sign',side_effect=ValueError(reason)), patch('sys.argv',['sign','input.zip','output.zip','--source-sha','a'*40]), contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit):ci.main()
+            self.assertIn(expected,errors.getvalue())
+            self.assertNotIn('private fixture password',errors.getvalue())
+
 
 if __name__=='__main__':unittest.main()

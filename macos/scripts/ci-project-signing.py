@@ -28,7 +28,8 @@ def execute(command):
     result = subprocess.run(command, text=True, capture_output=True)
     if result.returncode:
         # Never include argv or tool output: either can contain a secret.
-        raise ValueError(f'Signing tool {Path(command[0]).name} failed (exit {result.returncode})')
+        operation = command[1] if command[1] in ('list-keychains', 'create-keychain', 'unlock-keychain', 'import', 'delete-keychain') else 'operation'
+        raise ValueError(f'Signing tool {Path(command[0]).name}/{operation} failed (exit {result.returncode})')
     return result.stdout
 
 
@@ -91,8 +92,16 @@ def main():
         if args.cleanup_only: cleanup(os.environ); return
         if not args.input_zip or not args.output_zip or not args.source_sha: parser.error('Input, output and source SHA are required')
         print(json.dumps(sign(args.input_zip, args.output_zip, args.source_sha, os.environ), indent=2))
-    except (ValueError, OSError):
-        parser.exit(2, 'Project signing failed; no fallback identity or installer was published.\n')
+    except (ValueError, OSError) as error:
+        # Reveal only fixed validation messages or tool/operation/exit status, never raw output.
+        message = str(error)
+        safe = {'Wrong signing repository or source', 'Signing needs an exact source review; PR signing is forbidden',
+                'This exact run is not approved for project signing',
+                'Complete project signing configuration is required; no replacement key will be generated',
+                'Invalid encrypted signing identity', 'Empty encrypted signing identity',
+                'A private runner temporary directory is required', 'Temporary signing keychain was not removed cleanly'}
+        diagnostic = message if message in safe or re.fullmatch(r'Signing tool security/(?:list-keychains|create-keychain|unlock-keychain|import|delete-keychain|operation) failed \(exit [0-9]+\)', message) or re.fullmatch(r'Signature validation or signing failed \(exit [0-9]+\)', message) else 'Validation or candidate signing failed'
+        parser.exit(2, f'Project signing failed: {diagnostic}; no fallback identity or installer was published.\n')
 
 
 if __name__ == '__main__': main()
