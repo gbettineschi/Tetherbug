@@ -430,6 +430,27 @@ func runMenuBarTests() {
         allowed = true; status = .requiresApproval; registration.resume()
         expect(registrations == 0 && completed == 1 && !registration.inFlight, "never override revoked approval")
     }
+    test("registration waits for cache propagation and rechecks FullWake before launching") {
+        var settled: (() -> Void)?; var registrations = 0; var allowed = true
+        let registration = LoginRegistration(status: { .enabled }, allowed: { allowed },
+            unregister: { $0(nil) }, register: { registrations += 1 }, settle: { settled = $0 })
+        _ = registration.begin { _ in }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        expect(settled != nil && registration.inFlight && registrations == 0, "native completion alone does not mean the bundle cache has propagated")
+        allowed = false; settled?()
+        expect(registrations == 0, "settling never bypasses DarkWake")
+        allowed = true; registration.resume()
+        expect(registrations == 1 && !registration.inFlight, "FullWake resumes the settled registration once")
+    }
+    test("cancelling during cache propagation rejects its late completion") {
+        var settled: (() -> Void)?; var registrations = 0; var completed = 0
+        let registration = LoginRegistration(status: { .enabled }, allowed: { true },
+            unregister: { $0(nil) }, register: { registrations += 1 }, settle: { settled = $0 })
+        _ = registration.begin { _ in completed += 1 }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        registration.cancel(); settled?()
+        expect(registrations == 0 && completed == 1 && !registration.inFlight, "cancelled propagation cannot register later")
+    }
     test("cancelled registration retains the native operation lease and resolves its waiter") {
         var finished: ((Error?) -> Void)?; var unregisters = 0; var settled = 0
         let registration = LoginRegistration(status: { .enabled }, allowed: { true },

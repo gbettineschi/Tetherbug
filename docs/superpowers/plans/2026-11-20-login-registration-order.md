@@ -14,3 +14,9 @@ Use a small native registration coordinator: asynchronously unregister, then reg
 - Closing and Quit wait for native repair to settle; DarkWake defers registration until full wake, and revoked login consent is respected.
 - Independent review found a cancellation-ownership race. Two more tests reproduced it (109 tests, four failures). Cancellation now retains the native unregister lease and resolves its completion; the Login Items control/handler cannot start another change while refresh is in flight.
 - No real registration, Bluetooth, permission or power mutations are used in tests. A signed device update still must prove no new launch-constraint reports.
+
+## Signed-device trial follow-up
+
+Trial D (0.1.12-signing.4) still produced one launch-constraint report. The log confirms completed unregister at 15:26:46.298, re-registration against the old BTM UUID at 46.657, and a failed spawn at 46.688. LaunchServices changed its record around 15:26:56; the bounded second registration at 15:27:32 used a new BTM UUID and started correctly. Native completion sequencing is necessary but did not cover the observed cache propagation delay.
+
+Apple DTS explicitly allows a delay when completion plus a main-run-loop turn is insufficient (https://developer.apple.com/forums/thread/783539). Add an asynchronous 15-second settlement between removal and re-registration, scoped to repairs/updated builds. Keep ownership, cancellation, consent and FullWake checks. This is an observed-device workaround, not an OS timing guarantee; require another changed signed build and zero new reports before release.

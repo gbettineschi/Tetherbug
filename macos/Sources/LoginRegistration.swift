@@ -5,7 +5,7 @@ import ServiceManagement
 
 /// Finishes one authorized re-registration before the caller starts or closes the helper.
 final class LoginRegistration {
-    private enum Phase { case idle, unregistering, registering }
+    private enum Phase { case idle, unregistering, settling, registering }
     private var phase = Phase.idle
     private var generation: UInt64 = 0
     private var wantsRegistration = true
@@ -14,12 +14,15 @@ final class LoginRegistration {
     private let allowed: () -> Bool
     private let unregister: (@escaping (Error?) -> Void) -> Void
     private let register: () throws -> Void
+    private let settle: (@escaping () -> Void) -> Void
     var inFlight: Bool { phase != .idle }
 
     init(status: @escaping () -> SMAppService.Status, allowed: @escaping () -> Bool,
          unregister: @escaping (@escaping (Error?) -> Void) -> Void,
-         register: @escaping () throws -> Void) {
+         register: @escaping () throws -> Void,
+         settle: @escaping (@escaping () -> Void) -> Void = LoginRegistration.settleNative) {
         self.status = status; self.allowed = allowed; self.unregister = unregister; self.register = register
+        self.settle = settle
     }
 
     @discardableResult
@@ -35,8 +38,12 @@ final class LoginRegistration {
                 guard let self, self.generation == token, self.phase == .unregistering else { return }
                 if !self.wantsRegistration { self.finish(CancellationError()); return }
                 if let error, self.status() != .notRegistered { self.finish(error); return }
-                self.phase = .registering
-                self.resume()
+                self.phase = .settling
+                self.settle { [weak self] in
+                    guard let self, self.generation == token, self.phase == .settling else { return }
+                    self.phase = .registering
+                    self.resume()
+                }
             }
         }
         return true
@@ -85,6 +92,15 @@ final class LoginRegistration {
             throw NSError(domain: "Tetherbug.LoginRegistration", code: 2)
         }
         try SMAppService.agent(plistName: loginAgentLabel + ".plist").register()
+    }
+
+    static func settleNative(_ finished: @escaping () -> Void) {
+        guard Bundle.main.bundleIdentifier == "ie.xav.tetherbug" else { finished(); return }
+        // This Mac's bundle/BTM record lagged unregister completion by about ten seconds.
+        // Apple DTS recommends a delay when completion + a run-loop turn is insufficient:
+        // https://developer.apple.com/forums/thread/783539 . Only a repair/update waits;
+        // unchanged managed starts do not. The caller rechecks FullWake and approval.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: finished)
     }
 
     static func runningBuild() -> String? {

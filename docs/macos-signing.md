@@ -1,12 +1,12 @@
 # Stable Mac identity across updates
 
-## Signing activated; installed-update acceptance pending
+## Retained signing identity verified
 
-Public releases through 0.1.11 are ad-hoc signed. The owner’s Mac now has the first permanently signed trial, 0.1.12-signing.1, installed in place. The build hash changes with updates, so macOS can require privacy approval again. A reboot alone does not change a signature. A prior installation or stale helper registration can make the mismatch appear at the next startup.
+Public releases through 0.1.11 were ad-hoc signed, changing privacy identity with each build. From 0.1.12, the project retains one certificate and bundle identifier. Two changed signed builds were installed in place on the owner’s Mac; live Bluetooth and Wi-Fi access remained usable, and the owner confirmed no repeated approval prompts. A reboot alone does not change a signature.
 
 The owner requested the free project-certificate approach already tested for Keepresso Mobile. Tetherbug uses its own certificate and unchanged bundle identifier, `ie.xav.tetherbug`. The default designated requirement must be exactly that identifier AND the certificate leaf fingerprint. Never substitute an identifier-only or hash-based requirement. No paid Apple membership is needed; this does not provide Developer ID or notarization. Gatekeeper remains enforced.
 
-Automated tests have signed two changed Tetherbug bundles with one temporary certificate and confirmed the identical default requirement. They rejected another signer, tampered resources and a wrong incoming code identifier, exercised the real archive signer and CI import/cleanup, and removed all temporary material. These tests did not install the app or grant privacy permissions. Real privacy retention still needs two owner installations.
+Automated tests have signed two changed Tetherbug bundles with one temporary certificate and confirmed the identical default requirement. They rejected another signer, tampered resources and a wrong incoming code identifier, exercised the real archive signer and CI import/cleanup, and removed all temporary material. These automated tests do not grant privacy permissions. Separate real A/B installations established retained usable grants with the owner’s confirmation.
 
 ## Production activation
 
@@ -28,7 +28,7 @@ For an unpublished trial, dispatch **Release personal apps** from the exact appr
 
 Install candidate A at `/Applications/Tetherbug.app`, preserving all settings/pairing. The owner handles any initial Bluetooth/Location approval. Verify live usable grants. Update in place to changed candidate B signed by the same certificate; verify identical DR, usable Bluetooth/Location, preserved pairing and managed startup without repeated approval. A denied/revoked grant must remain denied. Keep a compressed rollback only, with one discoverable installed app. Do not reset TCC or weaken Gatekeeper to make a test pass.
 
-The Bocconi handover test and release remain on hold until this acceptance is complete. No Android runtime or phone app update is part of this signing work.
+Installed A/B acceptance and the real S23 hotspot-to-Bocconi handover have passed. No Android runtime or phone app update is part of this signing work.
 
 References: [Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements), [Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/).
 
@@ -38,10 +38,18 @@ References: [Apple TN3127](https://developer.apple.com/documentation/technotes/t
 - SHA-1: `4d467e05e0e1a7a35024e86f97cf6c30a28e95d8`.
 - SHA-256: `9d1cf43945edd110ac5e5463699c116ff5313c8ea766f1dff16dfb12a00e6015`.
 - Valid 20 November 2026 through 20 November 2029, 13:00:40 UTC.
-- Protected environment and exact refs verified before upload; all three secret names verified afterward. Real installed-update permission retention is still pending.
+- Protected environment and exact refs verified before upload; all three secret names verified afterward. Real installed-update permission retention passed.
 
 ## Hosted and local acceptance status — 20 November 2026
 
 Both exact-source Mac-only trial workflows completed successfully using the retained certificate: [A](https://github.com/gbettineschi/Tetherbug/actions/runs/44744428908), [B](https://github.com/gbettineschi/Tetherbug/actions/runs/44744873344). The actual temporary-certificate integration also passed on the hosted runner. The fixture uses the native Mac exporter; Homebrew OpenSSL defaults produced an incompatible test PKCS12. Earlier macos-15 identity-lookup failures are recorded observations, not proof of an OS defect.
 
-A is installed at the single canonical path. Managed startup is running, pairing is preserved and live S23 Bluetooth status is usable. Initial Wi-Fi identification/verification has not yet been established; the owner has been asked to check the Wi-Fi/Location permission in Settings. B is downloaded and strictly verified: same exact signer/DR, different signed bytes. B installation is held until A has usable grants, so retention can be tested rather than assumed. No release or tap update has been published.
+A and B were installed sequentially at the single canonical path. Both established live S23 Bluetooth and Wi-Fi identification/internet verification; the owner confirmed B did not request either permission again. Pairing and settings survived. No privacy database reset or certificate trust change was used.
+
+The corrected native association backend was then tested from the actual S23 hotspot to Bocconi: enterprise EAP started immediately after association, DHCP completed, and stable internet was verified before switching the phone hotspot off. The campus join request to verified phone Off took about ten seconds. Initial phone-hotspot discovery required a retry; that delay is not included in the campus handover figure.
+
+### Updated helper registration
+
+macOS separately stores executable launch constraints for registered background services. Replacing a bundle while retaining an old launchd cdhash caused the owner’s CODESIGNING / Launch Constraint Violation reports. Certificate continuity for privacy permission does not remove this separate requirement.
+
+Tetherbug detects changed running code before kickstarting its registered helper. It refreshes registration using the native asynchronous unregister completion before registering again. Changes are serialized, deferred outside FullWake, and closing or quitting waits for outstanding registration. It preserves system approval and never suppresses crash reporting. See [Apple DTS guidance](https://developer.apple.com/forums/thread/783539).
