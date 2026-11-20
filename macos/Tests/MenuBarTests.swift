@@ -473,6 +473,7 @@ func runMenuBarTests() {
     test("missing enabled login service is repaired with bounded retries") {
         var managedStarts = 0
         var repairs = 0
+        var registrations = 0
         var sessionStarts = 0
         var uptime: TimeInterval = 10
         var fullWake = false
@@ -485,7 +486,7 @@ func runMenuBarTests() {
         }, unregisterLoginService: { completion in
             repairs += 1
             completion(nil)
-        }, registerLoginService: {}, isFullWake: {
+        }, registerLoginService: { registrations += 1 }, isFullWake: {
             powerChecks += 1
             return fullWake
         }, uptime: { uptime })
@@ -503,19 +504,21 @@ func runMenuBarTests() {
         expect(managedStarts == 1 && sessionStarts == 0, "only the registered service starts")
         uptime += 60
         let repairDeadline = Date().addingTimeInterval(2)
-        while repairs == 0 && !model.loginServiceUnavailable && Date() < repairDeadline {
+        while registrations == 0 && !model.loginServiceUnavailable && Date() < repairDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
-        expect(repairs == 1 && !model.loginServiceUnavailable, "expired startup triggers one native repair")
+        expect(repairs == 1 && registrations == 1 && !model.loginServiceUnavailable, "expired startup completes one native repair")
         uptime += 10
         RunLoop.main.run(until: Date().addingTimeInterval(1.1))
         expect(repairs == 1, "give macOS time to refresh the replaced bundle's registration")
         uptime += 60
         let secondRepairDeadline = Date().addingTimeInterval(2)
-        while repairs == 1 && !model.loginServiceUnavailable && Date() < secondRepairDeadline {
+        // Advance the fake clock only after asynchronous re-registration has finished;
+        // its response starts the next real startup deadline.
+        while registrations == 1 && !model.loginServiceUnavailable && Date() < secondRepairDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
-        expect(repairs == 2 && !model.loginServiceUnavailable, "retry once if the first registration never answers")
+        expect(repairs == 2 && registrations == 2 && !model.loginServiceUnavailable, "retry once if the first registration never answers")
         uptime += 60
         let failureDeadline = Date().addingTimeInterval(2)
         while !model.loginServiceUnavailable && Date() < failureDeadline {
