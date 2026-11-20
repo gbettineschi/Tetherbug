@@ -50,7 +50,8 @@ cat > "$app/Contents/Info.plist" <<EOF
 </dict></plist>
 EOF
 
-# The background agent, registered as a login item by the app (SMAppService).
+# Retained only so SMAppService can unregister an existing legacy job during migration.
+# New installations use SMAppService.mainApp; this LaunchAgent is never registered anew.
 cat > "$app/Contents/Library/LaunchAgents/ie.xav.tetherbug.agent.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

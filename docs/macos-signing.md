@@ -52,4 +52,8 @@ The corrected native association backend was then tested from the actual S23 hot
 
 macOS separately stores executable launch constraints for registered background services. Replacing a bundle while retaining an old launchd cdhash caused the owner’s CODESIGNING / Launch Constraint Violation reports. Certificate continuity for privacy permission does not remove this separate requirement.
 
-Tetherbug detects changed running code before kickstarting its registered helper. It refreshes registration using the native asynchronous unregister completion before registering again. Changes are serialized, deferred outside FullWake, and closing or quitting waits for outstanding registration. It preserves system approval and never suppresses crash reporting. See [Apple DTS guidance](https://developer.apple.com/forums/thread/783539).
+The first completion-based repair, a 15-second delay, root-preserving replacement and per-app LaunchServices refresh all reproduced the first legacy-job rejection on the owner's Mac. Those are not accepted as fixes.
+
+From 0.1.12, launch at login uses [SMAppService.mainApp](https://developer.apple.com/documentation/servicemanagement/smappservice/mainapp), which launches the app at future logins. The app starts its ordinary independent session worker; it does not register or kickstart a fixed executable LaunchAgent after each update. An already-enabled legacy agent is unregistered asynchronously and migrated to native app login. Disabled or blocked legacy login stays disabled. Migration remains serialized and respects FullWake, approval and close/Quit ownership. No crash reporting or security protection is suppressed.
+
+Changed signed-build startup acceptance is required before releasing this migration. A physical logout/reboot is not part of the automated update test and must not be claimed as observed.

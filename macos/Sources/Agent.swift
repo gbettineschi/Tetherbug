@@ -89,6 +89,7 @@ final class Agent: NSObject {
             note("another agent is already running; exiting")
             exit(0)
         }
+        state.workerPID = getpid()
         server = SocketServer(path: Socket.path) { [weak self] line in self?.handle(line) }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)

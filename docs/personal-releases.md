@@ -49,3 +49,7 @@ For a non-publishing check, use the exact-source **mac-trial** dispatch describe
 Local build-only packaging is still available with `python3 scripts/release.py`. It reads `~/.local/share/tetherbug/android-signing/signing.json`, or `TETHER_SIGNING_CONFIG`, containing `keystore` (path), `alias`, and `password`. Relative key paths are resolved next to that JSON. Use Command Line Tools, JDK21 and Android SDK37; set `JAVA_HOME` and `ANDROID_HOME` as needed. Keep the retained key and config private and backed up. No password is printed or passed as a command-line argument. Builds do not install apps or change device settings.
 
 Local Mac builds are ad-hoc signed and not notarized. Production project signing requires its dedicated protected key; this is not an Apple-issued identity. The MIT licence is included in both bundles. GitHub's standard hosted runner execution is free for this public repository.
+
+## Native startup from 0.1.12
+
+The launch-constraint recovery observations above describe earlier releases. The current update migrates to `SMAppService.mainApp` for native launch at login and keeps the ordinary session worker independent of that setting. It does not rebuild a fixed executable LaunchAgent after each update. An enabled legacy item is removed asynchronously; disabled or blocked login intent is preserved. Retained project signing handles privacy identity separately. See [Mac signing](macos-signing.md) for actual acceptance and its limits.

@@ -130,6 +130,8 @@ struct AgentState: Codable, Equatable {
     var wifiHandoverMessage: String?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
+    /// Local Mac worker identity; optional for compatibility with older snapshots.
+    var workerPID: Int32?
     /// Only the session worker's direct reply to `handover` can accept a transfer.
     var handoverAccepted: Bool?
     /// The launchd job running the agent when it isn't the app's own login item (e.g. nix-darwin's

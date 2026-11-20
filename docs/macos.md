@@ -109,8 +109,7 @@ The existing background agent also displays a native hotspot icon. No extra help
   is unavailable, clicking cannot issue another toggle. Errors appear in the menu and settings window.
 - The native checkmark column keeps its space while Automatic Mode is off, so toggling the checkmark does not shift the command labels.
 
-Keep **Launch at login** enabled to retain the menu when the settings window closes. Without
-it, the menu exists only while the window's session agent is running. Menu **Quit Tetherbug** exits
+The independent worker keeps the menu running when Settings closes, with **Launch at login** either on or off. From 0.1.12, that switch controls the native main-app login item for future logins; it does not restart the current worker. A previously enabled legacy LaunchAgent is migrated once. Native login launches leave Settings hidden. Menu **Quit Tetherbug** exits
 the agent and an open settings window; it does not turn off the phone's hotspot or unregister the login item.
 
 This remains Tetherbug's Bluetooth/Shizuku integration. The native Personal Hotspot marker depends on the phone actually transmitting it (not verified on every firmware, and absent on the tested S23); the menu does not add Apple's off-state discovery to macOS Wi-Fi.
