@@ -44,6 +44,19 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("native directed scans survive the framework's secure-coding boundary") {
+        _ = dlopen("/System/Library/PrivateFrameworks/CoreWiFi.framework/CoreWiFi", RTLD_LAZY)
+        guard let type = NSClassFromString("CWFScanParameters") as? NSObject.Type else {
+            expect(false, "native scan parameters must be available on the supported test host"); return
+        }
+        let parameters = NativeWifiAssociation.scanParameters(type, ssid: "Test Campus")
+        do {
+            let encoded = try NSKeyedArchiver.archivedData(withRootObject: parameters, requiringSecureCoding: true)
+            let decoded = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [type, NSString.self, NSNumber.self], from: encoded) as? NSObject
+            expect(decoded?.value(forKey: "SSID") as? String == "Test Campus", "the daemon expects a string in scan parameters, unlike raw SSID bytes in results/profiles")
+            expect(decoded?.value(forKey: "includeMatchingKnownNetworkProfiles") as? Bool == true, "keep the saved-profile lookup request")
+        } catch { expect(false, "directed scan request must decode under its real secure-coding contract") }
+    }
     test("timed out native joins retain ownership until their natural reply") {
         var state = WifiAssociationState()
         state.submitted = true

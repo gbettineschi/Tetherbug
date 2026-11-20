@@ -96,3 +96,10 @@
 - A logical timeout retains the native operation until its natural reply and rejects competing joins. Before sleep, cancel the owned request and suppress callbacks; only a fresh full-wake lifecycle resets a cancelled in-flight lease. An OS cancellation acknowledgement is not proof that radio association has physically stopped.
 - Three profile tests, one default-EAP test, and two ownership tests bring the suite to 101 passing Mac tests. A local `connect-hotspot` diagnostic uses the same native backend only while preferred handover is held, and is blocked in sleep/DarkWake.
 - Native-profile candidate installed at the single application path. Final hardware timing test is pending Mac unlock; release remains on hold. No Android runtime changes or phone installation.
+
+## Actual device validation — 20 November 2026
+
+- Stable project-signed trials A/B retain actual Bluetooth and Wi-Fi usability across changed installed builds; the owner confirmed no repeated authorization dialogs. Existing-campus verification turned the phone off only after the Wi-Fi-bound TLS probe.
+- The actual saved-profile phone join failed before association. Airportd’s NSXPC decoder rejected scan-request SSID bytes because CWFScanParameters requires NSString. Runtime properties independently confirm the parameter uses NSString while scan results/saved profiles use NSData.
+- Correct only the scan-request representation; keep exact raw-byte matching for results/profiles. A real framework secure-coding regression failed first (102 tests, one failure), then passed with the correct string. A focused independent review confirmed the boundary and fix.
+- Rebuild/sign the fixed runtime using the retained certificate and repeat the actual phone-to-campus handover before releasing. Previous failure restored the phone Off and left the Mac on its original campus network.

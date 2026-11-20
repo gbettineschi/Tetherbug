@@ -127,9 +127,7 @@ final class NativeWifiAssociation {
             }
             interface.perform(NSSelectorFromString("activate"))
             let data = Data(ssid.utf8)
-            let scanParameters = types.scan.init()
-            scanParameters.setValue(data, forKey: "SSID")
-            scanParameters.setValue(true, forKey: "includeMatchingKnownNetworkProfiles")
+            let scanParameters = Self.scanParameters(types.scan, ssid: ssid)
             let selector = NSSelectorFromString("performScanWithParameters:error:")
             let scan = unsafeBitCast(interface.method(for: selector), to: Scan.self)
             var error: NSError?
@@ -204,6 +202,14 @@ final class NativeWifiAssociation {
         operation.interface.perform(NSSelectorFromString("invalidate"))
         operation.reply = nil
         operation.parameters = nil
+    }
+
+    static func scanParameters(_ type: NSObject.Type, ssid: String) -> NSObject {
+        let parameters = type.init()
+        // The scan request takes NSString; scan results and saved profiles use NSData.
+        parameters.setValue(ssid, forKey: "SSID")
+        parameters.setValue(true, forKey: "includeMatchingKnownNetworkProfiles")
+        return parameters
     }
 
     /// Do not edit the actual saved profile or rebuild its EAP settings from partial information.
