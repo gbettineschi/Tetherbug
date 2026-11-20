@@ -32,7 +32,7 @@ CI builds the Android and Mac apps on every push.
 
 ## Releasing
 
-This personal fork builds signed Android releases locally, using the retained private key. See [personal releases](personal-releases.md). The upstream Play Store, Homebrew-tap and automatic release-PR workflows are removed from this fork; its GitHub Actions only run build, test and lint checks.
+This personal fork builds signed Android releases locally, using the retained private key. See [personal releases](personal-releases.md). The original distribution workflows are replaced by this fork’s verified release pipeline and shared personal tap. PR CI is keyless; see [stable Mac signing](macos-signing.md) for the protected signing boundary.
 
 ## Documentation images
 
