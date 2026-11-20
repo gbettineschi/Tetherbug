@@ -25,7 +25,7 @@ PLIST
   exit
 fi
 swiftc -target "$(uname -m)-apple-macos14.0" "$here/Sources/Protocol.swift" "$here/Sources/HotspotControl.swift" \
-  "$here/Sources/MenuBar.swift" "$here/Sources/App.swift" \
+  "$here/Sources/MenuBar.swift" "$here/Sources/App.swift" "$here/Sources/LoginRegistration.swift" \
   "$here/Sources/GeneratedShapes.swift" "$here/Sources/Socket.swift" \
   "$here/Sources/Agent.swift" "$here/Sources/BluetoothRecovery.swift" "$here/Sources/PowerActivity.swift" \
   "$here/Sources/SystemPowerMonitor.swift" "$here/Sources/BluetoothCallbacks.swift" \

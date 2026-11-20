@@ -1,6 +1,5 @@
 import AppKit
 import CoreBluetooth
-import CoreServices
 import ServiceManagement
 import SwiftUI
 
@@ -75,7 +74,10 @@ final class AgentModel: ObservableObject {
     private let agent = SMAppService.agent(plistName: loginAgentLabel + ".plist")
     private let loginServiceStatus: () -> SMAppService.Status
     private let startLoginService: () throws -> Void
-    private let repairLoginService: () throws -> Void
+    private let registration: LoginRegistration
+    private let registerLoginService: () throws -> Void
+    private let registrationBuild: String?
+    private var afterRegistration: (() -> Void)?
     private let isFullWake: () -> Bool
     private let uptime: () -> TimeInterval
     private var loginStartDeadline: TimeInterval?
@@ -110,20 +112,9 @@ final class AgentModel: ObservableObject {
              }
              try process.run()
          },
-         repairLoginService: @escaping () throws -> Void = {
-             let service = SMAppService.agent(plistName: loginAgentLabel + ".plist")
-             guard service.status == .enabled else { return }
-             // The installed bundle may have replaced an older signature at the same path.
-             let refresh = LSRegisterURL(Bundle.main.bundleURL as CFURL, true)
-             guard refresh == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(refresh)) }
-             do {
-                 try service.unregister()
-             } catch {
-                 // A package upgrade can remove the job before Service Management sees it.
-                 guard service.status == .notRegistered else { throw error }
-             }
-             try service.register()
-         },
+         unregisterLoginService: @escaping (@escaping (Error?) -> Void) -> Void = LoginRegistration.unregisterNative,
+         registerLoginService: @escaping () throws -> Void = LoginRegistration.registerNative,
+         currentRegistrationBuild: @escaping () -> String? = LoginRegistration.runningBuild,
          isFullWake: @escaping () -> Bool = {
              PowerActivity.isFullWake(SystemPowerMonitor.capabilities())
          },
@@ -133,7 +124,10 @@ final class AgentModel: ObservableObject {
         self.request = request
         self.loginServiceStatus = loginServiceStatus
         self.startLoginService = startLoginService
-        self.repairLoginService = repairLoginService
+        self.registrationBuild = currentRegistrationBuild()
+        self.registerLoginService = registerLoginService
+        self.registration = LoginRegistration(status: loginServiceStatus, allowed: isFullWake,
+            unregister: unregisterLoginService, register: registerLoginService)
         self.isFullWake = isFullWake
         self.uptime = uptime
         self.loginItem = loginServiceStatus()
@@ -160,6 +154,10 @@ final class AgentModel: ObservableObject {
 
     private func receive(_ state: AgentState) {
         if state.stopping == true {
+            if registration.inFlight {
+                afterRegistration = { [weak self] in self?.quit { NSApp.terminate(nil) } }
+                return
+            }
             agentStopping = true
             NSApp.terminate(nil)
             return
@@ -202,6 +200,10 @@ final class AgentModel: ObservableObject {
 
     func quit(completion: @escaping () -> Void) {
         guard !agentStopping else { completion(); return }
+        if registration.inFlight {
+            afterRegistration = { [weak self] in self?.quit(completion: completion) }
+            return
+        }
         closeSettings() // prevent the watcher from treating intentional shutdown as a crash
         let child = sessionAgent
         // A submitted launchctl start can finish after Cmd-Q. Give that worker the remainder
@@ -237,6 +239,7 @@ final class AgentModel: ObservableObject {
 
     private func recoverAgent() {
         guard !agentStopping, isFullWake() else { return }
+        if registration.inFlight { registration.resume(); return }
         refreshLoginServiceStatus()
         guard loginItem == .enabled else {
             startSessionAgent()
@@ -244,6 +247,11 @@ final class AgentModel: ObservableObject {
         }
         if let deadline = loginStartDeadline {
             if uptime() >= deadline && !loginServiceUnavailable { repairMissingLoginService() }
+            return
+        }
+        if let registrationBuild,
+           defaults.string(forKey: "loginRegisteredBuild") != registrationBuild {
+            repairMissingLoginService()
             return
         }
         loginStartDeadline = uptime() + Self.loginStartTimeout
@@ -266,19 +274,39 @@ final class AgentModel: ObservableObject {
         // Give the updated signature time to propagate before the last registration attempt.
         let wait = loginRepairAttempts == 1 ? Self.signatureRefreshTime : Self.loginStartTimeout
         loginStartDeadline = uptime() + wait
-        do {
-            try repairLoginService()
+        let accepted = registration.begin { [weak self] error in
+            guard let self else { return }
+            self.refreshLoginServiceStatus()
+            if let error {
+                self.loginStartup = self.loginItem == .enabled ? .unavailable : .idle
+                self.loginError = error.localizedDescription
+                log("couldn't repair the login agent: \(error.localizedDescription)")
+            } else {
+                self.loginStartDeadline = self.uptime() + wait
+                if let build = self.registrationBuild, self.loginItem == .enabled {
+                    self.defaults.set(build, forKey: "loginRegisteredBuild")
+                }
+            }
+            let finished = self.afterRegistration
+            self.afterRegistration = nil
+            finished?()
+        }
+        if !accepted {
+            loginRepairAttempts -= 1
+            clearLoginStartAttempt()
             refreshLoginServiceStatus()
-        } catch {
-            refreshLoginServiceStatus()
-            loginStartup = loginItem == .enabled ? .unavailable : .idle
-            loginError = error.localizedDescription
-            log("couldn't repair the login agent: \(error.localizedDescription)")
         }
     }
 
+    /// Keep the GUI alive briefly so closing it cannot interrupt native re-registration.
+    func finishRegistrationBeforeClosing(_ completion: @escaping () -> Void) -> Bool {
+        guard registration.inFlight else { return false }
+        afterRegistration = completion
+        return true
+    }
+
     func retryLoginService() {
-        guard state == nil else { return }
+        guard state == nil, !registration.inFlight else { return }
         loginError = nil
         loginRepairAttempts = 0
         clearLoginStartAttempt()
@@ -314,13 +342,19 @@ final class AgentModel: ObservableObject {
     }
 
     func setLoginItem(_ on: Bool) {
+        guard !registration.inFlight else { return }
         loginError = nil
         loginRepairAttempts = 0
+        registration.cancel()
         clearLoginStartAttempt()
+        if !on { defaults.removeObject(forKey: "loginRegisteredBuild") }
         do {
             if on {
                 stopSessionAgent()
-                try agent.register()
+                try registerLoginService()
+                if let registrationBuild, agent.status == .enabled {
+                    defaults.set(registrationBuild, forKey: "loginRegisteredBuild")
+                }
             } else {
                 try agent.unregister()
             }
@@ -441,6 +475,7 @@ struct ContentView: View {
                         get: { model.loginItem == .enabled || model.loginItem == .requiresApproval },
                         set: { model.setLoginItem($0) }
                     ))
+                    .disabled(model.loginStartup == .repairing)
                 }
                 if model.loginItem == .requiresApproval {
                     Button("Allow Tetherbug in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
@@ -608,7 +643,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { closingSettings = true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if closingSettings || model.isEnding { return .terminateNow }
+        if closingSettings {
+            return model.finishRegistrationBeforeClosing { sender.reply(toApplicationShouldTerminate: true) }
+                ? .terminateLater : .terminateNow
+        }
+        if model.isEnding { return .terminateNow }
         model.quit { sender.reply(toApplicationShouldTerminate: true) }
         return .terminateLater
     }
