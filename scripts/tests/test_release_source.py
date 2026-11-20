@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import io
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 import unittest
 from unittest.mock import patch
 
@@ -32,6 +32,14 @@ class PublicationSourceTests(unittest.TestCase):
             with patch.object(release, 'ROOT', root), patch.object(release, 'run', side_effect=run), patch('sys.argv', ['release.py', '--publish']), redirect_stdout(io.StringIO()):
                 release.main()
             self.assertIn(('git', 'push', 'https://github.com/gbettineschi/Tetherbug.git', 'abc:refs/tags/v1.2.3'), calls)
+
+    def test_an_ad_hoc_build_cannot_be_published_directly(self):
+        errors = io.StringIO()
+        with patch('sys.argv', ['release.py', '--publish', '--existing-tag']), redirect_stdout(io.StringIO()), redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as error:
+                release.main()
+            self.assertEqual(error.exception.code, 2)
+        self.assertIn("protected signing", errors.getvalue())
 
     def test_tag_job_requires_exact_event_tag_and_remote_commit(self):
         with patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}), patch.object(release, "run") as run:

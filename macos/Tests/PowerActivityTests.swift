@@ -73,7 +73,7 @@ func runPowerActivityTests() {
     test("manual socket commands cannot send or queue requests in DarkWake") {
         for caps: UInt32? in [nil, 0x19] {
             let agent = Agent(capabilities: { caps })
-            for command in ["enable", "disable", "toggle"] {
+            for command in ["enable", "disable", "toggle", "connect-hotspot"] {
                 let state = agent.handle(command)
                 expect(state?.lastRequest == nil, "no request created by \(command)")
                 expect(state?.requestPending != true, "no command queued for later wake")

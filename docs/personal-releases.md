@@ -20,6 +20,8 @@ Official upstream, F-Droid or other independently signed APKs cannot update this
 
 ## macOS
 
+A [stable project-certificate signing path](macos-signing.md) is prepared, with the project key activated and real two-update permission acceptance pending. The following ad-hoc behaviour describes existing published builds.
+
 The release ZIP contains a universal Apple Silicon/Intel app. Quit Tetherbug, replace the existing app at the same location, and reopen it. Preserve its Application Support and preferences files. The bundle ID is unchanged; the ad-hoc signing identity is not stable across builds, so Bluetooth permission can require renewed approval. Downloads are not notarized: allow the app in System Settings → Privacy & Security if macOS blocks it.
 
 Homebrew tracks `Casks/tetherbug-personal.rb` in the shared [public tap](https://github.com/gbettineschi/homebrew-tap). Set it up with `brew tap gbettineschi/tap`, then install `gbettineschi/tap/tetherbug-personal`. Later, `brew update` followed by `brew upgrade --cask gbettineschi/tap/tetherbug-personal` installs the fork’s new Mac releases. This does not create a background update schedule. For a first move from another app location, turn off **Launch at login** in the old copy and quit it. Install/open the Homebrew copy, then enable **Launch at login** there. Keep preferences and app data intact; this changes the helper registration to the new bundle location. Subsequent Homebrew upgrades retain that location. An embedded Sparkle updater would require a separate implementation; it is not included. The Latest app only covers supported update mechanisms such as Sparkle and the App Store, so it cannot discover these plain ZIP releases automatically.
@@ -33,7 +35,7 @@ After the Homebrew upgrade to **0.1.7**, the app could connect through its tempo
 1. Review and merge wanted upstream commits. Preserve the personal changes, Android package ID and signing identity.
 2. Update `android/gradle.properties`: increase numeric `versionName` and `versionCode` above the preceding release. Add `releases/<version>.md` with notes for both platforms.
 3. Commit and push the reviewed source to this fork's `main`. Push a matching `vX.Y.Z` tag, or run `python3 scripts/release.py --publish` from that clean commit to push the tag for you.
-4. **Release personal apps** tests the focused Android regressions and all Mac tests, builds/signs both apps, checks the retained Android certificate and package/version, and publishes the APK, universal Mac ZIP, checksums and source manifest.
+4. **Release personal apps** tests/builds the apps separately, checks the retained Android certificate, and waits for owner approval of the protected stable Mac signer. It publishes only the verified signed ZIP/APK, signing receipt, checksums and source manifest. Production signing must first be activated as described above.
 5. Its dependent tap job updates the shared Homebrew recipe automatically. Obtainium discovers the Android APK from the same GitHub release. There is exactly one APK per release, so no APK filter is needed.
 
 The one automatic publisher owns release creation. The local `--publish` command requests that workflow; it no longer builds a second competing release. The automatic job checks that its tag points to the exact source commit on `main`. Published downloads are immutable: use a new version instead of replacing assets. To retry only the tap, run **Update Homebrew tap** with the existing tag.
@@ -42,8 +44,12 @@ The one automatic publisher owns release creation. The local `--publish` command
 
 The Android key, password and alias are encrypted secrets in the **android-release** Actions environment. That environment permits version tags and `main` manual verification, without pull-request access. The key is restored to a private temporary file on a disposable runner and removed afterward. This is a public repository; secret values are not public. A person able to alter trusted release workflows could misuse signing access, so keep repository write access controlled.
 
-For a non-publishing CI check, run **Release personal apps** manually on `main`. It builds and verifies both packages without uploading installers or creating a release or tap update. Routine CI also tests/builds without keeping installer downloads. Tagged releases publish installers directly to GitHub Releases, with no duplicate Actions artifact.
+For a non-publishing check, use the exact-source **mac-trial** dispatch described in the [signing guide](macos-signing.md). It produces only a one-day signed Mac artifact, without Android signing, release creation or a tap update. Routine PR CI stays keyless.
 
 Local build-only packaging is still available with `python3 scripts/release.py`. It reads `~/.local/share/tetherbug/android-signing/signing.json`, or `TETHER_SIGNING_CONFIG`, containing `keystore` (path), `alias`, and `password`. Relative key paths are resolved next to that JSON. Use Command Line Tools, JDK21 and Android SDK37; set `JAVA_HOME` and `ANDROID_HOME` as needed. Keep the retained key and config private and backed up. No password is printed or passed as a command-line argument. Builds do not install apps or change device settings.
 
-The Mac build is ad-hoc signed and not notarized; no Apple signing key is uploaded. The MIT licence is included in both bundles. GitHub's standard hosted runner execution is free for this public repository.
+Local Mac builds are ad-hoc signed and not notarized. Production project signing requires its dedicated protected key; this is not an Apple-issued identity. The MIT licence is included in both bundles. GitHub's standard hosted runner execution is free for this public repository.
+
+## Native startup from 0.1.12
+
+The launch-constraint recovery observations above describe earlier releases. The current update migrates to `SMAppService.mainApp` for native launch at login and keeps the ordinary session worker independent of that setting. It does not rebuild a fixed executable LaunchAgent after each update. An enabled legacy item is removed asynchronously; disabled or blocked login intent is preserved. Retained project signing handles privacy identity separately. See [Mac signing](macos-signing.md) for actual acceptance and its limits.

@@ -21,6 +21,8 @@ final class Agent: NSObject {
     private var command: CBCharacteristic?
     private var credentials: CBCharacteristic?
     private var statusCharacteristic: CBCharacteristic?
+    private var statusReceiver = PhoneStatusReceiver()
+    private var statusSubscription = PhoneStatusSubscription()
     private var password: String? // kept in memory only
     private var server: SocketServer!
     private var agentLock: AgentLock?
@@ -38,6 +40,14 @@ final class Agent: NSObject {
     private var menuBar: MenuBarController?
     private var wifi: NWPathMonitor?
     private let scanQueue = DispatchQueue(label: "ie.xav.tetherbug.scan")
+    private var wifiPathConnected = false
+    private var wifiInterface: NWInterface?
+    private lazy var wifiService = MacWifiHandoverService(activity: activity, queue: scanQueue,
+        wifiInterface: { [weak self] in self?.wifiInterface })
+    private lazy var handover = WifiHandover(service: wifiService,
+        context: { [unowned self] in self.handoverContext() },
+        turnOff: { [weak self] in self?.request(false, reason: "preferred Wi-Fi verified") },
+        report: { [weak self] in self?.state.wifiHandoverMessage = $0 })
     private var offlineSince: Date?
     private var backoff: TimeInterval = 2
     private var nextRetry = Date.distantPast
@@ -79,6 +89,7 @@ final class Agent: NSObject {
             note("another agent is already running; exiting")
             exit(0)
         }
+        state.workerPID = getpid()
         server = SocketServer(path: Socket.path) { [weak self] line in self?.handle(line) }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -117,6 +128,18 @@ final class Agent: NSObject {
         case "toggle": toggleFromMenu()
         case "automatic on": setAutomatic(true)
         case "automatic off": setAutomatic(false)
+        case "connect-hotspot":
+            // Local diagnostic/manual join. Hold preferred handover first, so it cannot race
+            // the explicit connection request; reuse the same native saved-profile backend.
+            guard radioAllowed(), !Settings.returnToPreferredWifi, state.connected,
+                  state.status?.hotspot == .on, statusReceiver.ready, statusSubscription.ready,
+                  let ssid = state.status?.ssid, !ssid.isEmpty else { return state }
+            handover.cancel()
+            state.wifiHandoverMessage = "Connecting to the phone’s hotspot…"
+            wifiService.join(ssid) { [weak self] success in
+                guard let self, self.radioAllowed() else { return }
+                self.state.wifiHandoverMessage = success ? nil : "Couldn’t join the phone’s hotspot."
+            }
         case "quit": quit()
         case "handover":
             guard !isLoginAgent, state.managedBy == nil, !exiting else { return state }
@@ -156,6 +179,7 @@ final class Agent: NSObject {
     }
 
     private func resumeRadio() {
+        wifiService.resumeAfterSleep()
         let token = activity.generation
         recovery.restart()
         offlineSince = nil
@@ -181,6 +205,10 @@ final class Agent: NSObject {
     }
 
     private func suspendRadio() {
+        handover.cancel()
+        wifiService.suspend()
+        wifiPathConnected = false
+        wifiInterface = nil
         maintenance?.invalidate()
         maintenance = nil
         pendingFullScan?.cancel()
@@ -199,7 +227,10 @@ final class Agent: NSObject {
     }
 
     private func wifiChanged(_ path: NWPath) {
-        let poweredOn = CWWiFiClient.shared().interface()?.powerOn() ?? false
+        let interface = CWWiFiClient.shared().interface()
+        wifiInterface = path.availableInterfaces.first { $0.type == .wifi && $0.name == interface?.interfaceName }
+        wifiPathConnected = path.status == .satisfied && wifiInterface != nil
+        let poweredOn = interface?.powerOn() ?? false
         let offline = poweredOn && path.status != .satisfied
         if offline != state.wifiOffline { note(offline ? "Wi-Fi lost" : "Wi-Fi connected") }
         state.wifiOffline = offline
@@ -218,6 +249,10 @@ final class Agent: NSObject {
     private func tick() {
         guard radioAllowed() else { return }
         maintainConnection()
+        if let action = statusSubscription.due() {
+            applyStatusAction(action)
+            return
+        }
         // Shizuku can recover without an AP/battery notification from Android. Read its current
         // readiness while unavailable, rather than leaving an old "not ready" snapshot forever.
         if state.connected, state.status?.controllable == false, Date() >= nextReadinessCheck,
@@ -227,6 +262,7 @@ final class Agent: NSObject {
         }
         control.refresh(state)
         publishControl()
+        handover.tick()
         if control.needsReconnect {
             if state.stopping != true, !reconnectRequested, let phone {
                 reconnectRequested = true
@@ -234,7 +270,7 @@ final class Agent: NSObject {
             }
             return
         }
-        guard state.stopping != true, control.shouldAutomaticallyEnable(state),
+        guard state.stopping != true, !handover.busy, control.shouldAutomaticallyEnable(state),
               command != nil, offlineSince != nil, Date() >= nextRetry else { return }
         request(true, reason: "no Wi-Fi")
         nextRetry = Date().addingTimeInterval(backoff)
@@ -243,6 +279,7 @@ final class Agent: NSObject {
 
     func request(_ on: Bool, reason: String) {
         guard radioAllowed() else { return }
+        handover.cancel()
         state.lastRequest = "\(on ? "enable" : "disable") (\(reason)) at \(ISO8601DateFormatter().string(from: Date()))"
         guard let phone, let command else {
             note("\(on ? "enable" : "disable") requested (\(reason)) but the phone isn't connected")
@@ -258,6 +295,7 @@ final class Agent: NSObject {
 
     private func toggleFromMenu() {
         guard radioAllowed() else { return }
+        handover.cancel()
         guard let phone, let command, let on = control.toggle(state) else { return }
         state.lastRequest = "\(on ? "enable" : "disable") (menu) at \(ISO8601DateFormatter().string(from: Date()))"
         // Publish the pause before issuing Off, so no retry can immediately turn it back on.
@@ -273,10 +311,30 @@ final class Agent: NSObject {
     }
 
     private func automaticControlChanged() {
+        handover.cancel()
         publishControl()
         backoff = 2
         nextRetry = max(Date(), (offlineSince ?? Date()).addingTimeInterval(TimeInterval(Settings.disconnectWait)))
         tick()
+    }
+
+    private func handoverContext() -> WifiHandover.Context {
+        let enabled = Settings.returnToPreferredWifi
+        let networks = Settings.preferredWifiNetworks
+        var c = WifiHandover.Context(allowed: activity.allows(activity.generation) && state.stopping != true,
+            enabled: enabled, automaticActive: control.automaticActive(), preferred: networks,
+            currentSSID: nil, wifiConnected: wifiPathConnected,
+            hotspotSSID: state.status?.ssid, hotspotOn: state.status?.hotspot == .on,
+            canControlHotspot: control.canToggle(state) && statusReceiver.ready && statusSubscription.ready,
+            wifiPoweredOn: false, locationAllowed: false)
+        // Do not poll hardware or location authorization for disabled/paused/ineligible handover.
+        guard c.allowed, c.enabled, c.automaticActive, c.hotspotOn, c.canControlHotspot,
+              !c.candidates.isEmpty, wifiService.locationAllowed else { return c }
+        c.locationAllowed = true
+        let interface = CWWiFiClient.shared().interface()
+        c.currentSSID = interface?.ssid()
+        c.wifiPoweredOn = interface?.powerOn() == true
+        return c
     }
 
     private func publishControl() {
@@ -346,6 +404,8 @@ final class Agent: NSObject {
         command = nil
         credentials = nil
         statusCharacteristic = nil
+        statusReceiver = PhoneStatusReceiver()
+        statusSubscription = PhoneStatusSubscription()
         password = nil
         outstandingWrite = nil
         reconnectRequested = false
@@ -415,8 +475,7 @@ final class Agent: NSObject {
             switch characteristic.uuid {
             case Gatt.status:
                 statusCharacteristic = characteristic
-                peripheral.readValue(for: characteristic)
-                peripheral.setNotifyValue(true, for: characteristic)
+                applyStatusAction(statusSubscription.begin())
             case Gatt.command:
                 command = characteristic
             case Gatt.credentials:
@@ -434,9 +493,12 @@ final class Agent: NSObject {
             password = String(decoding: value, as: UTF8.self)
             return
         }
-        guard characteristic === statusCharacteristic, let value = characteristic.value,
-              let status = PhoneStatus(value), command != nil,
+        guard characteristic === statusCharacteristic, statusSubscription.acceptsValue,
+              let value = characteristic.value, command != nil,
+              let status = statusReceiver.receive(value, notification: statusSubscription.notification),
               recovery.receivedStatus(from: peripheral.identifier) else { return }
+        if let action = statusSubscription.readCompleted() { applyStatusAction(action) }
+        else if !statusReceiver.ready { applyStatusAction(statusSubscription.begin()) }
         Settings.preferredPhone = recovery.preferred
         central.stopScan()
         nextReadinessCheck = Date().addingTimeInterval(10)
@@ -449,6 +511,26 @@ final class Agent: NSObject {
         state.status = status
         control.refresh(state, receivedStatus: true)
         tick()
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard phone === peripheral, characteristic === statusCharacteristic else { return }
+        if let action = statusSubscription.changed(notifying: characteristic.isNotifying, failed: error != nil) {
+            applyStatusAction(action)
+        }
+    }
+
+    private func applyStatusAction(_ action: PhoneStatusSubscription.Action) {
+        guard let phone, let characteristic = statusCharacteristic else { return }
+        switch action {
+        case .unsubscribe: phone.setNotifyValue(false, for: characteristic)
+        case .read: phone.readValue(for: characteristic)
+        case .subscribe: phone.setNotifyValue(true, for: characteristic)
+        case .reconnect:
+            note("hotspot status subscription failed or stalled; reconnecting")
+            recovery.disconnected()
+            clearPhoneConnection()
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {

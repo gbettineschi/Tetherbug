@@ -40,6 +40,78 @@ struct PhoneStatus: Codable, Equatable {
     }
 }
 
+/// ATT notifications may carry only 20 bytes. A read assembles the full characteristic, including
+/// a long SSID. Keep that identity across short notifications and re-read when the hotspot starts.
+struct PhoneStatusReceiver {
+    private var completeSSID: String?
+    private var lastHotspot: PhoneStatus.Hotspot?
+    private var needsRead = true
+    var ready: Bool { completeSSID != nil && !needsRead }
+
+    mutating func receive(_ data: Data, notification: Bool) -> PhoneStatus? {
+        guard var status = PhoneStatus(data) else { return nil }
+        if !notification {
+            completeSSID = status.ssid
+            needsRead = false
+        } else {
+            let header = [1: 4, 2: 5, 3: 7][Int(data.first!)]!
+            if let completeSSID, Array(completeSSID.utf8).starts(with: data.dropFirst(header)) {
+                status.ssid = completeSSID
+            } else { needsRead = true }
+            if status.hotspot == .on && lastHotspot != .on { needsRead = true }
+        }
+        lastHotspot = status.hotspot
+        return status
+    }
+}
+
+/// A bonded phone can restore notifications before discovery. Explicitly stop them first and
+/// keep the deadline until subscription acknowledgement, so no read is confused with a push.
+struct PhoneStatusSubscription {
+    enum Action { case unsubscribe, read, subscribe, reconnect }
+    private enum Phase { case idle, stopping, reading, starting, active }
+    private var phase = Phase.idle
+    private var deadline: Date?
+    var ready: Bool { phase == .active }
+    var notification: Bool { phase == .active }
+    var acceptsValue: Bool { phase == .reading || phase == .active }
+
+    mutating func begin(now: Date = Date()) -> Action {
+        phase = .stopping
+        deadline = now.addingTimeInterval(10)
+        return .unsubscribe
+    }
+
+    mutating func changed(notifying: Bool, failed: Bool) -> Action? {
+        guard deadline != nil else { return nil }
+        if failed { return reset() }
+        if phase == .stopping && !notifying { phase = .reading; return .read }
+        if phase == .starting && notifying {
+            phase = .active
+            deadline = nil
+            return .read // catch a state change made while notifications were disabled
+        }
+        return nil
+    }
+
+    mutating func readCompleted() -> Action? {
+        guard phase == .reading else { return nil }
+        phase = .starting
+        return .subscribe
+    }
+
+    mutating func due(now: Date = Date()) -> Action? {
+        guard let deadline, now >= deadline else { return nil }
+        return reset()
+    }
+
+    private mutating func reset() -> Action {
+        phase = .idle
+        deadline = nil
+        return .reconnect
+    }
+}
+
 /// Everything the agent knows, sent to the app and CLI over the local socket.
 struct AgentState: Codable, Equatable {
     var bluetooth = "unknown"
@@ -54,8 +126,12 @@ struct AgentState: Codable, Equatable {
     var automaticSuspended: Bool { automaticPausedUntil != nil }
     var requestPending: Bool?
     var requestError: String?
+    /// Optional Mac-only Wi-Fi handover progress; absent in older agents.
+    var wifiHandoverMessage: String?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
+    /// Local Mac worker identity; optional for compatibility with older snapshots.
+    var workerPID: Int32?
     /// Only the session worker's direct reply to `handover` can accept a transfer.
     var handoverAccepted: Bool?
     /// The launchd job running the agent when it isn't the app's own login item (e.g. nix-darwin's
@@ -73,6 +149,16 @@ struct AgentState: Codable, Equatable {
 /// binary is launched (inside the bundle or through a symlink).
 enum Settings {
     static let defaults = UserDefaults(suiteName: "ie.xav.tetherbug.settings") ?? .standard
+
+    static var returnToPreferredWifi: Bool {
+        get { defaults.bool(forKey: "returnToPreferredWifi") }
+        set { defaults.set(newValue, forKey: "returnToPreferredWifi") }
+    }
+
+    static var preferredWifiNetworks: [String] {
+        get { defaults.stringArray(forKey: "preferredWifiNetworks") ?? [] }
+        set { defaults.set(newValue, forKey: "preferredWifiNetworks") }
+    }
 
     static var preferredPhone: UUID? {
         get { defaults.string(forKey: "preferredPhone").flatMap(UUID.init(uuidString:)) }

@@ -32,7 +32,7 @@ CI builds the Android and Mac apps on every push.
 
 ## Releasing
 
-This personal fork builds signed Android releases locally, using the retained private key. See [personal releases](personal-releases.md). The upstream Play Store, Homebrew-tap and automatic release-PR workflows are removed from this fork; its GitHub Actions only run build, test and lint checks.
+This personal fork builds signed Android releases locally, using the retained private key. See [personal releases](personal-releases.md). The original distribution workflows are replaced by this fork’s verified release pipeline and shared personal tap. PR CI is keyless; see [stable Mac signing](macos-signing.md) for the protected signing boundary.
 
 ## Documentation images
 
@@ -63,3 +63,12 @@ After changing the setup screen, regenerate them (`just store` also re-renders t
 ```bash
 just android-shots
 ```
+
+
+### Native hotspot join diagnostics
+
+The local agent socket accepts `connect-hotspot` for a controlled manual/native join. Temporarily
+hold Preferred Wi-Fi handover first. The paired phone must report its hotspot On with complete
+metadata, and the hotspot network must already be saved in macOS. The command uses the same native
+saved-profile association backend as preferred handover, and cannot operate in sleep or DarkWake.
+It does not read or log passwords. Restore Preferred Wi-Fi after the test.

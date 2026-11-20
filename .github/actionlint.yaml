@@ -1,0 +1,5 @@
+# actionlint lists custom runner labels here. This does not select self-hosted execution.
+# xcode-27 was verified as GitHub-hosted in the working Keepresso signing trials.
+self-hosted-runner:
+  labels:
+    - xcode-27

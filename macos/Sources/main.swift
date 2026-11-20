@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import ServiceManagement
 
 let usage = """
     usage: tetherbug [command]
@@ -58,6 +59,11 @@ case "agent":
     Agent().run()
 case "status", "enable", "disable", "watch":
     cli(args.first!, json: args.contains("--json"))
+case "login-status": // local startup diagnostics; never changes registration or privacy settings
+    let value = ["enabled": SMAppService.mainApp.status == .enabled,
+                 "requiresApproval": SMAppService.mainApp.status == .requiresApproval,
+                 "legacyEnabled": LoginRegistration.legacyStatus() == .enabled]
+    print(String(decoding: try! JSONEncoder().encode(value), as: UTF8.self))
 case "debug":
     switch args.dropFirst().first {
     case "on": Settings.debugNotifications = true

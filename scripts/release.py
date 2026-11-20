@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "gbettineschi/Tetherbug"
@@ -25,9 +26,14 @@ def main():
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--existing-tag", action="store_true",
                         help="Publish the exact version tag that triggered Actions")
+    parser.add_argument("--mac-only", action="store_true", help="Build an unpublished, keyless Mac candidate")
+    parser.add_argument("--android-only", action="store_true", help="Build the retained-key APK for the release pipeline")
+    parser.add_argument("--version", help="Mac trial version; requires --mac-only")
     args = parser.parse_args()
-    if args.existing_tag and not args.publish:
-        parser.error("--existing-tag requires --publish.")
+    if args.existing_tag:
+        parser.error("Existing tags require the protected signing workflow; raw builds cannot be published.")
+    if args.version and not args.mac_only or args.mac_only and args.publish or args.mac_only and args.android_only:
+        parser.error("Mac trials cannot publish or change Android versions.")
     if run("git", "status", "--porcelain", capture=True):
         parser.error("Commit the release tree first; builds must match their source tag.")
     properties = dict(re.findall(r"^(versionName|versionCode)=(.+)$",
@@ -40,6 +46,16 @@ def main():
         parser.error(f"Missing release notes: releases/{version}.md")
     tag = f"v{version}"
     sha = run("git", "rev-parse", "HEAD", capture=True)
+    if args.mac_only:
+        version = args.version or version
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?", version) or len(version) > 64:
+            parser.error("Invalid Mac trial version.")
+        run("bash", "macos/test.sh")
+        out = ROOT / "build/releases" / version
+        out.mkdir(parents=True, exist_ok=True)
+        build_mac(out, version)
+        print(f"Built unpublished Mac candidate: {out}")
+        return
     if args.publish:
         try:
             verify_publication_source(tag, sha, args.existing_tag)
@@ -69,7 +85,8 @@ def main():
     out = ROOT / "build/releases" / version
     out.mkdir(parents=True, exist_ok=True)
 
-    run("bash", "macos/test.sh")
+    if not args.android_only:
+        run("bash", "macos/test.sh")
     run("./gradlew", "testDebugUnitTest", "--tests", "ie.xav.tetherbug.AutoStartTest",
         "--tests", "ie.xav.tetherbug.BluetoothTransportTest", "assembleRelease",
         "--no-daemon", "--console=plain", env=env, cwd=ROOT / "android")
@@ -85,12 +102,9 @@ def main():
     if not identity or identity.groups() != ("ie.xav.tetherbug", code, version):
         raise RuntimeError("APK identity or version does not match the release sources.")
 
-    run("bash", "macos/build.sh", str(out / "macos"), version, "arm64", "x86_64")
-    app = out / "macos/Tetherbug.app"
-    run("codesign", "--verify", "--deep", "--strict", str(app))
-    archive = out / f"Tetherbug-v{version}.zip"
-    run("ditto", "-c", "-k", "--keepParent", str(app), str(archive))
-    assets = [apk, archive]
+    assets = [apk]
+    if not args.android_only:
+        assets.append(build_mac(out, version))
     checksums = out / "SHA256SUMS.txt"
     checksums.write_text("".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n"
                                  for p in assets))
@@ -98,11 +112,17 @@ def main():
     manifest.write_text(json.dumps({"version": version, "androidVersionCode": int(code),
                                    "sourceCommit": sha, "androidCertificateSha256": CERT,
                                    "macosSigning": "ad-hoc; not notarized"}, indent=2) + "\n")
-    if args.publish:
-        run("gh", "release", "create", tag, "--repo", REPO, "--verify-tag",
-            "--title", f"Tetherbug (gbettineschi's version) {version}", "--notes-file", str(notes),
-            "--latest", *(str(p) for p in [*assets, checksums, manifest]))
-    print(f"{'Published' if args.publish else 'Built'} {version}: {out}")
+    print(f"Built {version}: {out}; publication requires the protected Mac signer.")
+
+
+def build_mac(out, version):
+    archive = out / f"Tetherbug-v{version}.zip"
+    with tempfile.TemporaryDirectory(prefix="tetherbug-package-") as staging:
+        run("bash", "macos/build.sh", staging, version, "arm64", "x86_64")
+        app = Path(staging) / "Tetherbug.app"
+        run("codesign", "--verify", "--deep", "--strict", str(app))
+        run("ditto", "-c", "-k", "--keepParent", str(app), str(archive))
+    return archive
 
 
 def verify_publication_source(tag, sha, existing_tag):

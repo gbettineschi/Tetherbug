@@ -1,5 +1,7 @@
+import ServiceManagement
 import AppKit
 import Foundation
+import CoreServices
 
 // The tests never request notification permission (normally implemented by the CLI entry point).
 func notificationPermissionGranted() -> Bool { false }
@@ -310,11 +312,10 @@ func runMenuBarTests() {
             try process.run()
             child = process
             return process
-        }, loginServiceStatus: { .notRegistered }, startLoginService: {
+        }, loginServiceStatus: { .notRegistered }, unregisterLoginService: { completion in
             loginOperations += 1
-        }, repairLoginService: {
-            loginOperations += 1
-        }, isFullWake: { true })
+            completion(nil)
+        }, registerLoginService: {}, isFullWake: { true })
         defer { model.closeSettings(); child?.terminate(); child?.waitUntilExit() }
         let deadline = Date().addingTimeInterval(2)
         while launches == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
@@ -360,64 +361,167 @@ func runMenuBarTests() {
         expect(newWorker != nil && requests == 2, "retry after the socket becomes available")
     }
 
-    test("missing enabled login service is repaired with bounded retries") {
-        var managedStarts = 0
-        var repairs = 0
-        var sessionStarts = 0
-        var uptime: TimeInterval = 10
-        var fullWake = false
-        var powerChecks = 0
+    test("enabled main-app login starts one session worker without re-registering on an update") {
+        var launches = 0; var registrations = 0; var removals = 0; var child: Process?
         let model = AgentModel(watch: { _ in false }, launchAgent: {
-            sessionStarts += 1
-            return Process()
-        }, loginServiceStatus: { .enabled }, startLoginService: {
-            managedStarts += 1
-        }, repairLoginService: {
-            repairs += 1
-        }, isFullWake: {
-            powerChecks += 1
-            return fullWake
-        }, uptime: { uptime })
-        defer { model.closeSettings() }
-        let darkDeadline = Date().addingTimeInterval(2)
-        while powerChecks == 0 && Date() < darkDeadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(powerChecks > 0 && managedStarts == 0 && repairs == 0, "DarkWake does not start or repair a worker")
-        fullWake = true
-        let startDeadline = Date().addingTimeInterval(2)
-        while managedStarts == 0 && Date() < startDeadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(managedStarts == 1 && sessionStarts == 0, "only the registered service starts")
-        uptime += 60
-        let repairDeadline = Date().addingTimeInterval(2)
-        while repairs == 0 && !model.loginServiceUnavailable && Date() < repairDeadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(repairs == 1 && !model.loginServiceUnavailable, "expired startup triggers one native repair")
-        uptime += 10
+            launches += 1
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sleep"); p.arguments = ["30"]
+            try p.run(); child = p; return p
+        }, loginServiceStatus: { .enabled }, legacyLoginServiceStatus: { .notRegistered },
+            unregisterLoginService: { _ in removals += 1 }, registerLoginService: { registrations += 1 }, isFullWake: { true })
+        defer { model.closeSettings(); if child?.isRunning == true { child?.terminate(); child?.waitUntilExit() } }
+        let deadline = Date().addingTimeInterval(2)
+        while launches == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         RunLoop.main.run(until: Date().addingTimeInterval(1.1))
-        expect(repairs == 1, "give macOS time to refresh the replaced bundle's registration")
-        uptime += 60
-        let secondRepairDeadline = Date().addingTimeInterval(2)
-        while repairs == 1 && !model.loginServiceUnavailable && Date() < secondRepairDeadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        expect(launches == 1 && registrations == 0 && removals == 0, "a changed executable needs no LaunchAgent registration or kickstart")
+        model.closeSettings()
+        expect(child?.isRunning == true, "closing Settings retains the independent worker")
+    }
+    test("enabled legacy agent migrates once to native main-app login after removal completes") {
+        var finished: ((Error?) -> Void)?; var registrations = 0; var legacy = SMAppService.Status.enabled
+        let model = AgentModel(watch: { _ in false }, launchAgent: { Process() },
+            loginServiceStatus: { registrations > 0 ? .enabled : .notRegistered }, legacyLoginServiceStatus: { legacy },
+            unregisterLoginService: { finished = $0 }, registerLoginService: { registrations += 1 }, isFullWake: { true })
+        defer { model.closeSettings() }
+        let deadline = Date().addingTimeInterval(2)
+        while finished == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(finished != nil && registrations == 0 && model.loginMigrationInFlight, "preserve removal ownership before enabling the native item")
+        legacy = .notRegistered; finished?(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.1))
+        expect(registrations == 1 && model.loginItem == .enabled && !model.loginMigrationInFlight, "one migration preserves enabled login intent")
+    }
+    test("legacy login that was off or blocked never enables native login automatically") {
+        for legacy in [SMAppService.Status.notRegistered, .requiresApproval] {
+            var registrations = 0; var removals = 0
+            let model = AgentModel(watch: { _ in false }, launchAgent: { Process() },
+                loginServiceStatus: { .notRegistered }, legacyLoginServiceStatus: { legacy },
+                unregisterLoginService: { _ in removals += 1 }, registerLoginService: { registrations += 1 }, isFullWake: { true })
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            expect(registrations == 0 && removals == 0, "native login preserves the user's disabled or blocked state")
+            model.closeSettings()
         }
-        expect(repairs == 2 && !model.loginServiceUnavailable, "retry once if the first registration never answers")
-        uptime += 60
-        let failureDeadline = Date().addingTimeInterval(2)
-        while !model.loginServiceUnavailable && Date() < failureDeadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        expect(model.loginServiceUnavailable, "a registered service without a socket reports failure")
-        expect(repairs == 2 && managedStarts == 1 && sessionStarts == 0, "ongoing outage cannot loop or start another worker")
+    }
+    test("closing Settings waits for migration and a replacement worker serving status") {
+        var finished: ((Error?) -> Void)?; var registrations = 0; var closed = false; var launches = 0
+        var watcher: ((AgentState) -> Bool)?; var child: Process?
+        let model = AgentModel(watch: { watcher = $0; return false }, launchAgent: {
+            launches += 1
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sleep"); p.arguments = ["30"]
+            try p.run(); child = p; return p
+        }, loginServiceStatus: { .notRegistered }, legacyLoginServiceStatus: { .enabled },
+            unregisterLoginService: { finished = $0 }, registerLoginService: { registrations += 1 }, isFullWake: { true })
+        defer { model.closeSettings(); if child?.isRunning == true { child?.terminate(); child?.waitUntilExit() } }
+        let deadline = Date().addingTimeInterval(2)
+        while finished == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(model.finishRegistrationBeforeClosing { closed = $0 } && !closed, "closing waits for native migration")
+        finished?(nil)
+        while child == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(registrations == 1 && launches == 1 && !closed, "native main-app registration does not start the replacement worker itself")
+        _ = watcher?(phoneState(.off))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        expect(!closed, "a stale legacy snapshot does not prove the new worker is ready")
+        var fresh = phoneState(.off); fresh.workerPID = child?.processIdentifier
+        _ = watcher?(fresh); RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        expect(closed && child?.isRunning == true, "close only after a new worker serves status")
+    }
+    test("normal close times out when a connected watcher never sends replacement readiness") {
+        let releaseWatch = DispatchSemaphore(value: 0)
+        var finished: ((Error?) -> Void)?; var replied = false; var allowedClose = true; var child: Process?
+        let model = AgentModel(watch: { _ in releaseWatch.wait(); return true }, launchAgent: {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sleep"); p.arguments = ["30"]
+            try p.run(); child = p; return p
+        }, loginServiceStatus: { .notRegistered }, legacyLoginServiceStatus: { .enabled },
+            unregisterLoginService: { finished = $0 }, registerLoginService: {}, isFullWake: { true }, closeReadinessTimeout: 0.05)
+        defer { model.closeSettings(); releaseWatch.signal(); if child?.isRunning == true { child?.terminate(); child?.waitUntilExit() } }
+        expect(model.finishRegistrationBeforeClosing { allowedClose = $0; replied = true }, "migration defers the close")
+        finished?(nil)
+        let deadline = Date().addingTimeInterval(2)
+        while !replied && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(replied && !allowedClose && model.loginServiceUnavailable, "a blocked connected stream cannot leave AppKit terminating forever")
+    }
+    test("Quit settles migration then stops the session worker while preserving future login") {
+        var finished: ((Error?) -> Void)?; var registered = false; var requests = 0; var exited = false
+        let model = AgentModel(watch: { _ in false }, launchAgent: { Process() }, request: { command in
+            if command == "quit" && registered { requests += 1; return true }; return false
+        }, loginServiceStatus: { .notRegistered }, legacyLoginServiceStatus: { .enabled },
+            unregisterLoginService: { finished = $0 }, registerLoginService: { registered = true }, isFullWake: { true })
+        defer { model.closeSettings() }
+        let deadline = Date().addingTimeInterval(2)
+        while finished == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        model.quit { exited = true }
+        expect(!exited, "wait for the native removal acknowledgement")
+        finished?(nil)
+        while !exited && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(exited && registered && requests == 1, "Quit completes without disabling future login")
+    }
+    test("migration defers across DarkWake and respects revoked consent") {
+        var allowed = true; var status = SMAppService.Status.enabled; var registrations = 0
+        var finished: ((Error?) -> Void)?; var completed = 0
+        let registration = LoginRegistration(status: { status }, allowed: { allowed },
+            unregister: { finished = $0 }, register: { registrations += 1 })
+        expect(registration.begin { _ in completed += 1 }, "begin authorized migration")
+        allowed = false; finished?(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        expect(registration.inFlight && registrations == 0, "no registration in DarkWake")
+        allowed = true; status = .requiresApproval; registration.resume()
+        expect(registrations == 0 && completed == 1 && !registration.inFlight, "revoked approval remains revoked")
+    }
+    test("cancelled migration owns native removal until its callback") {
+        var finished: ((Error?) -> Void)?; var removals = 0; var settled = 0
+        let registration = LoginRegistration(status: { .enabled }, allowed: { true },
+            unregister: { removals += 1; finished = $0 }, register: {})
+        _ = registration.begin { _ in settled += 1 }; registration.cancel()
+        expect(registration.inFlight && !registration.begin { _ in } && removals == 1, "no overlapping removals")
+        finished?(nil); RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        expect(!registration.inFlight && settled == 1, "cancelled work still resolves its waiter")
+    }
+    test("an explicit toggle cannot bypass outstanding legacy migration") {
+        var finished: ((Error?) -> Void)?; var registrations = 0
+        let model = AgentModel(watch: { _ in false }, launchAgent: { Process() }, loginServiceStatus: { .notRegistered },
+            legacyLoginServiceStatus: { .enabled }, unregisterLoginService: { finished = $0 },
+            registerLoginService: { registrations += 1 }, isFullWake: { true })
+        defer { model.closeSettings() }
+        let deadline = Date().addingTimeInterval(2)
+        while finished == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        model.setLoginItem(true)
+        expect(registrations == 0, "the UI cannot overlap native registration changes")
+        finished?(nil); RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        expect(registrations == 1, "only the acknowledged migration enables login")
+    }
+    test("worker launch errors are visible and bounded until explicit Retry") {
+        var attempts = 0
+        let model = AgentModel(watch: { _ in false }, launchAgent: {
+            attempts += 1; throw NSError(domain: "Test.Launch", code: 1)
+        }, loginServiceStatus: { .enabled }, isFullWake: { true })
+        defer { model.closeSettings() }
+        let deadline = Date().addingTimeInterval(2)
+        while attempts == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.1))
+        expect(attempts == 1 && model.loginServiceUnavailable && model.loginError != nil, "native login status does not conceal a worker launch failure")
         model.retryLoginService()
-        expect(managedStarts == 2 && !model.loginServiceUnavailable, "explicit retry starts a fresh attempt")
+        expect(attempts == 2, "explicit Retry attempts the worker again")
+    }
+    test("a worker that exits before serving status cannot cause an endless restart loop") {
+        var launches = 0; var uptime: TimeInterval = 10
+        let model = AgentModel(watch: { _ in false }, launchAgent: { launches += 1; return Process() },
+            loginServiceStatus: { .enabled }, isFullWake: { true }, uptime: { uptime })
+        defer { model.closeSettings() }
+        let deadline = Date().addingTimeInterval(2)
+        while launches == 0 && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        uptime = 20
+        while !model.loginServiceUnavailable && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(model.loginServiceUnavailable && launches == 1, "the original startup deadline bounds exited children too")
+    }
+    test("native login AppleEvent hides Settings but an ordinary launch does not") {
+        expect(!LoginLaunch.isLoginEvent(nil), "missing context is an ordinary launch")
+        let event = NSAppleEventDescriptor(eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEOpenApplication),
+            targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
+        expect(!LoginLaunch.isLoginEvent(event), "ordinary Open Application shows Settings")
+        event.setParam(NSAppleEventDescriptor(enumCode: OSType(keyAELaunchedAsLogInItem)), forKeyword: AEKeyword(keyAEPropData))
+        expect(LoginLaunch.isLoginEvent(event), "the native login marker starts only the background worker")
     }
 
     test("an available worker is observed without starting either kind of worker") {
-        var managedStarts = 0
         var sessionStarts = 0
         let finish = DispatchSemaphore(value: 0)
         let model = AgentModel(watch: { receive in
@@ -427,26 +531,24 @@ func runMenuBarTests() {
         }, launchAgent: {
             sessionStarts += 1
             return Process()
-        }, loginServiceStatus: { .enabled }, startLoginService: {
-            managedStarts += 1
-        })
+        }, loginServiceStatus: { .enabled })
         defer { model.closeSettings(); finish.signal() }
         let deadline = Date().addingTimeInterval(2)
         while model.state == nil && Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         expect(model.state?.status?.hotspot == .off, "Settings receives current phone status")
-        expect(managedStarts == 0 && sessionStarts == 0, "no start while a worker serves the socket")
+        expect(sessionStarts == 0, "no start while a worker serves the socket")
     }
 
-    test("explicit Quit reaches a registered worker that is still starting") {
+    test("explicit Quit reaches a session worker that is still starting") {
         var starts = 0
         var requests = 0
-        let model = AgentModel(watch: { _ in false }, request: { command in
+        let model = AgentModel(watch: { _ in false }, launchAgent: { starts += 1; return Process() }, request: { command in
             guard command == "quit" else { return false }
             requests += 1
             return requests == 2
-        }, loginServiceStatus: { .enabled }, startLoginService: { starts += 1 }, isFullWake: { true })
+        }, loginServiceStatus: { .enabled }, isFullWake: { true })
         let deadline = Date().addingTimeInterval(2)
         while starts == 0 && Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))

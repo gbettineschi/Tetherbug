@@ -45,10 +45,13 @@ cat > "$app/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSMinimumSystemVersion</key><string>$min_macos</string>
   <key>NSBluetoothAlwaysUsageDescription</key><string>Tetherbug talks to your phone over Bluetooth to turn its hotspot on when your Mac has no Wi-Fi.</string>
+  <key>NSLocationUsageDescription</key><string>Tetherbug identifies your selected Wi-Fi networks to switch back from your phone’s hotspot. It does not track your location.</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>Tetherbug identifies your selected Wi-Fi networks to switch back from your phone’s hotspot. It does not track your location.</string>
 </dict></plist>
 EOF
 
-# The background agent, registered as a login item by the app (SMAppService).
+# Retained only so SMAppService can unregister an existing legacy job during migration.
+# New installations use SMAppService.mainApp; this LaunchAgent is never registered anew.
 cat > "$app/Contents/Library/LaunchAgents/ie.xav.tetherbug.agent.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
