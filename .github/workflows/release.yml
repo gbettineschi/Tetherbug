@@ -24,7 +24,7 @@ concurrency:
 jobs:
   candidate:
     if: github.repository == 'gbettineschi/Tetherbug'
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 25
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -85,7 +85,7 @@ jobs:
 
   sign:
     needs: candidate
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 15
     environment: macos-release
     permissions:

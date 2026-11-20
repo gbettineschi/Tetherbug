@@ -23,3 +23,9 @@ Ruling: Existing feature worktree is isolated and reused; implementation is auth
 - Verified owner-only environment review, no administrator bypass, and exact trial branch/version-tag rules before uploading. Three environment secrets confirmed; public certificate/fingerprints committed.
 - Temporary generation/export files removed. No personal keychain import, global trust, TCC or app change. No independent backup created.
 - Next: exact-source Mac-only A/B signed trials; actual grant retention and Bocconi handover remain pending.
+
+## Hosted runner follow-up
+
+- The macos-15 runner imports both retained and ephemeral identities but signing reports that the specified keychain item cannot be found. The same actual fixture passes locally. No installer was produced or installed, and cleanup succeeded.
+- Safe diagnostics disclose only fixed tool/operation labels for production signing; keyless ephemeral fixtures also report password-redacted tool errors. Regression tests cover redaction.
+- Ruling: align both keyless Mac build/self-test and the fresh signing-only job with Keepresso’s verified hosted `xcode-27` runner; its successful trial job metadata confirms GitHub-hosted execution. Preserve the retained identity, strict requirement and protected environment. Do not change trust or guess at key/ACL replacements. Confirm with the actual fixture before loading production keys.
