@@ -81,6 +81,8 @@ final class AgentModel: ObservableObject {
     var loginMigrationInFlight: Bool { registration.inFlight }
     private var afterRegistration: (() -> Void)?
     private var pendingNormalClose: ((Bool) -> Void)?
+    private let closeReadinessTimeout: TimeInterval
+    private var closeGeneration: UInt64 = 0
     private let isFullWake: () -> Bool
     private let uptime: () -> TimeInterval
     private var loginStartDeadline: TimeInterval?
@@ -109,7 +111,8 @@ final class AgentModel: ObservableObject {
          isFullWake: @escaping () -> Bool = {
              PowerActivity.isFullWake(SystemPowerMonitor.capabilities())
          },
-         uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+         uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         closeReadinessTimeout: TimeInterval = 8) {
         self.defaults = defaults
         self.launchAgent = launchAgent
         self.request = request
@@ -120,6 +123,7 @@ final class AgentModel: ObservableObject {
             unregister: unregisterLoginService, register: registerLoginService)
         self.isFullWake = isFullWake
         self.uptime = uptime
+        self.closeReadinessTimeout = closeReadinessTimeout
         self.loginItem = loginServiceStatus()
         onNoWifi = defaults.object(forKey: "onNoWifi") as? Bool ?? true
         migrateLegacyLoginService()
@@ -274,13 +278,22 @@ final class AgentModel: ObservableObject {
         afterRegistration = { [weak self] in
             guard let self else { completion(false); return }
             self.pendingNormalClose = completion
+            self.closeGeneration &+= 1
+            let generation = self.closeGeneration
             self.state = nil
             self.startSessionAgent()
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.closeReadinessTimeout) { [weak self] in
+                guard let self, !self.agentStopping, self.closeGeneration == generation,
+                      self.pendingNormalClose != nil else { return }
+                self.loginStartup = .unavailable
+                self.finishNormalClose(false)
+            }
         }
         return true
     }
 
     private func finishNormalClose(_ ready: Bool) {
+        closeGeneration &+= 1
         let finished = pendingNormalClose
         pendingNormalClose = nil
         finished?(ready)
@@ -640,7 +653,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if closingSettings {
             return model.finishRegistrationBeforeClosing { [weak self] ready in
-                if !ready { self?.showSettings() }
+                if !ready, PowerActivity.isFullWake(SystemPowerMonitor.capabilities()) { self?.showSettings() }
                 sender.reply(toApplicationShouldTerminate: ready)
             }
                 ? .terminateLater : .terminateNow

@@ -414,7 +414,8 @@ func runMenuBarTests() {
         let deadline = Date().addingTimeInterval(2)
         while finished == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         expect(model.finishRegistrationBeforeClosing { closed = $0 } && !closed, "closing waits for native migration")
-        finished?(nil); RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        finished?(nil)
+        while child == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         expect(registrations == 1 && launches == 1 && !closed, "native main-app registration does not start the replacement worker itself")
         _ = watcher?(phoneState(.off))
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -422,6 +423,21 @@ func runMenuBarTests() {
         var fresh = phoneState(.off); fresh.workerPID = child?.processIdentifier
         _ = watcher?(fresh); RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         expect(closed && child?.isRunning == true, "close only after a new worker serves status")
+    }
+    test("normal close times out when a connected watcher never sends replacement readiness") {
+        let releaseWatch = DispatchSemaphore(value: 0)
+        var finished: ((Error?) -> Void)?; var replied = false; var allowedClose = true; var child: Process?
+        let model = AgentModel(watch: { _ in releaseWatch.wait(); return true }, launchAgent: {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sleep"); p.arguments = ["30"]
+            try p.run(); child = p; return p
+        }, loginServiceStatus: { .notRegistered }, legacyLoginServiceStatus: { .enabled },
+            unregisterLoginService: { finished = $0 }, registerLoginService: {}, isFullWake: { true }, closeReadinessTimeout: 0.05)
+        defer { model.closeSettings(); releaseWatch.signal(); if child?.isRunning == true { child?.terminate(); child?.waitUntilExit() } }
+        expect(model.finishRegistrationBeforeClosing { allowedClose = $0; replied = true }, "migration defers the close")
+        finished?(nil)
+        let deadline = Date().addingTimeInterval(2)
+        while !replied && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(replied && !allowedClose && model.loginServiceUnavailable, "a blocked connected stream cannot leave AppKit terminating forever")
     }
     test("Quit settles migration then stops the session worker while preserving future login") {
         var finished: ((Error?) -> Void)?; var registered = false; var requests = 0; var exited = false
