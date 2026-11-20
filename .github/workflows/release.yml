@@ -61,6 +61,21 @@ jobs:
           python3 scripts/release.py --mac-only --version "$VERSION"
           mkdir "$RUNNER_TEMP/mac-candidate"
           cp "build/releases/$VERSION/Tetherbug-v$VERSION.zip" "$RUNNER_TEMP/mac-candidate/"
+      - name: Exercise real signing with temporary test keys only
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util,os,subprocess,tempfile
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('candidate','macos/scripts/sign-candidate.py')
+          candidate=importlib.util.module_from_spec(spec);spec.loader.exec_module(candidate)
+          archive=Path(os.environ['RUNNER_TEMP'])/'mac-candidate'/('Tetherbug-v'+os.environ['VERSION']+'.zip')
+          with tempfile.TemporaryDirectory(prefix='tetherbug-keyless-fixture-') as directory:
+              root=Path(directory)/'.build';root.mkdir()
+              app,*_=candidate.extract_candidate(archive,root)
+              subprocess.run(['python3','macos/scripts/test-project-signing-integration.py','--allow-temporary-keychain-probe','--app',str(app)],check=True)
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-mac-candidate

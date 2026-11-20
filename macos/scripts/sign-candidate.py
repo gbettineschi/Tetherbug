@@ -22,10 +22,23 @@ MAGIC = {bytes.fromhex(value) for value in ('cffaedfe','feedfacf','cefaedfe','fe
 PRIVATE_SUFFIXES = ('.p12','.pfx','.keychain','.keychain-db','.key','.pem')
 
 
+def failure_reason(output):
+    reasons = [('User interaction is not allowed', 'interaction-required'),
+               ('errSecInternalComponent', 'key-access'), ('no identity found', 'identity-missing'),
+               ('not trusted', 'certificate-untrusted'), ('CSSMERR_TP_NOT_TRUSTED', 'certificate-untrusted'),
+               ('resource fork', 'metadata'), ('sealed resource', 'resources'),
+               ('not signed at all', 'unsigned'), ('bundle format', 'bundle-format'),
+               ('not found in the keychain', 'identity-missing')]
+    return next((reason for phrase, reason in reasons if phrase in output), 'other')
+
+
 def execute(command, *, env=None):
     result = subprocess.run(command, env=env, text=True, capture_output=True)
     if result.returncode:
-        raise ValueError('Signature validation or signing failed (exit %s)' % result.returncode)
+        tool = Path(command[0]).name
+        operation = 'project-sign' if tool == 'bash' else 'verify' if '--verify' in command else 'display'
+        reason = failure_reason(result.stdout + result.stderr)
+        raise ValueError(f'Signing command {tool}/{operation} failed (exit {result.returncode}; reason {reason})')
     return result.stdout + result.stderr
 
 

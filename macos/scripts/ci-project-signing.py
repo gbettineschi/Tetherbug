@@ -100,7 +100,7 @@ def main():
                 'Complete project signing configuration is required; no replacement key will be generated',
                 'Invalid encrypted signing identity', 'Empty encrypted signing identity',
                 'A private runner temporary directory is required', 'Temporary signing keychain was not removed cleanly'}
-        diagnostic = message if message in safe or re.fullmatch(r'Signing tool security/(?:list-keychains|create-keychain|unlock-keychain|import|delete-keychain|operation) failed \(exit [0-9]+\)', message) or re.fullmatch(r'Signature validation or signing failed \(exit [0-9]+\)', message) else 'Validation or candidate signing failed'
+        diagnostic = message if message in safe or re.fullmatch(r'Signing tool security/(?:list-keychains|create-keychain|unlock-keychain|import|delete-keychain|operation) failed \(exit [0-9]+\)', message) or re.fullmatch(r'Signing command (?:codesign|bash)/(?:project-sign|verify|display) failed \(exit [0-9]+; reason (?:interaction-required|key-access|identity-missing|certificate-untrusted|metadata|resources|unsigned|bundle-format|other)\)', message) else 'Validation or candidate signing failed'
         parser.exit(2, f'Project signing failed: {diagnostic}; no fallback identity or installer was published.\n')
 
 

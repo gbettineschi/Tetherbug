@@ -88,6 +88,14 @@ class CandidateTests(unittest.TestCase):
         with zipfile.ZipFile(self.output) as archive:
             self.assertNotIn(ROOT+'Contents/MacOS/._Tetherbug', archive.namelist())
 
+    def test_tool_failure_exposes_a_fixed_reason_without_raw_output(self):
+        import subprocess
+        outcome=subprocess.CompletedProcess(['bash'],1,stdout='private fixture value',stderr='User interaction is not allowed: private fixture value')
+        with patch.object(self.code.subprocess,'run',return_value=outcome):
+            with self.assertRaises(ValueError) as failure:self.code.execute(['bash','sign-app.sh'])
+        self.assertIn('interaction-required',str(failure.exception))
+        self.assertNotIn('private fixture value',str(failure.exception))
+
     def test_path_escape_is_rejected_without_signing(self):
         for path in ['../escape','/absolute','Tetherbug.app/../escape','Tetherbug.app//Contents/evil','Tetherbug.app\\escape']:
             with self.subTest(path=path):

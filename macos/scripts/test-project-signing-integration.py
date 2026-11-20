@@ -17,7 +17,10 @@ import zipfile
 def run(args, *, env=None, check=True):
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     if check and result.returncode:
-        raise AssertionError(f'{Path(args[0]).name} failed (exit {result.returncode})')
+        spec = importlib.util.spec_from_file_location('failure_classifier', Path(__file__).with_name('sign-candidate.py'))
+        classifier = importlib.util.module_from_spec(spec); spec.loader.exec_module(classifier)
+        reason = classifier.failure_reason(result.stdout + result.stderr)
+        raise AssertionError(f'{Path(args[0]).name} failed (exit {result.returncode}; reason {reason})')
     return result
 
 
