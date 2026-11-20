@@ -20,7 +20,14 @@ def run(args, *, env=None, check=True):
         spec = importlib.util.spec_from_file_location('failure_classifier', Path(__file__).with_name('sign-candidate.py'))
         classifier = importlib.util.module_from_spec(spec); spec.loader.exec_module(classifier)
         reason = classifier.failure_reason(result.stdout + result.stderr)
-        raise AssertionError(f'{Path(args[0]).name} failed (exit {result.returncode}; reason {reason})')
+        # This fixture never receives production keys. Redact even its one-day passwords
+        # before reporting the actual hosted-tool error; production signing stays opaque.
+        diagnostic = result.stderr[:2000]
+        private_values = [value for name, value in (env or os.environ).items()
+                          if value and any(word in name.upper() for word in ('PASSWORD', 'SECRET', 'TOKEN'))]
+        private_values += [args[index + 1] for index, value in enumerate(args[:-1]) if value in ('-p', '-P')]
+        for value in private_values: diagnostic = diagnostic.replace(value, '[redacted]')
+        raise AssertionError(f'{Path(args[0]).name} failed (exit {result.returncode}; reason {reason}); ephemeral-fixture diagnostic: {diagnostic}')
     return result
 
 
