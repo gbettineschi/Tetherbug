@@ -1,6 +1,6 @@
 # Stable Mac identity across updates
 
-## Prepared; production activation pending
+## Signing activated; installed-update acceptance pending
 
 The installed build and public releases through 0.1.11 are ad-hoc signed. The build hash changes with updates, so macOS can require privacy approval again. A reboot alone does not change a signature. A prior installation or stale helper registration can make the mismatch appear at the next startup.
 
@@ -10,11 +10,11 @@ Automated tests have signed two changed Tetherbug bundles with one temporary cer
 
 ## Production activation
 
-After explicit owner approval, generate a dedicated three-year RSA-3072/SHA-256 code-signing certificate in a private temporary directory. Export password-encrypted PKCS12. Publish only its public certificate at `docs/signing/tetherbug-project.pem` and record its fingerprints. Do not reuse Keepresso keys, add trust or import the production identity into a personal keychain.
+The owner approved activation on 20 November 2026. A dedicated three-year RSA-3072/SHA-256 code-signing certificate was generated in a private temporary directory; its encrypted identity was uploaded and temporary generation files removed. For any future deliberately approved replacement, generate it in a private temporary directory. Export password-encrypted PKCS12. Publish only its public certificate at `docs/signing/tetherbug-project.pem` and record its fingerprints. Do not reuse Keepresso keys, add trust or import the production identity into a personal keychain.
 
 Store these three private values in the fork's **macos-release** GitHub environment: `MACOS_SIGNING_PKCS12_BASE64`, `MACOS_SIGNING_PKCS12_PASSWORD` (32+ random characters), `MACOS_SIGNING_CERTIFICATE_SHA1`. They must never appear in git, chat, logs or download artifacts. Before upload, verify owner-only required deployment review, disabled administrator bypass and selected refs restricted to `v*` tags plus the exact approved trial branch. The checked-in verifier repeats that check on the signing runner. After trial acceptance, remove the temporary branch rule.
 
-The current proposal uses protected GitHub secrets as key custody and deletes temporary generation files after successful provisioning. No independent encrypted backup destination has been selected or created. GitHub secret values cannot be downloaded again. Losing the retained key would require a deliberate signer change and renewed approvals; never silently generate a replacement. Certificate expiry/rotation also needs an explicit migration.
+The activated identity uses protected GitHub secrets as key custody; temporary generation files were deleted after successful provisioning. No independent encrypted backup destination has been selected or created. GitHub secret values cannot be downloaded again. Losing the retained key would require a deliberate signer change and renewed approvals; never silently generate a replacement. Certificate expiry/rotation also needs an explicit migration.
 
 ## Release path
 
@@ -31,3 +31,11 @@ Install candidate A at `/Applications/Tetherbug.app`, preserving all settings/pa
 The Bocconi handover test and release remain on hold until this acceptance is complete. No Android runtime or phone app update is part of this signing work.
 
 References: [Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements), [Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/).
+
+## Activated public identity
+
+- [Public certificate](signing/tetherbug-project.pem); [metadata](signing/tetherbug-project.json). These contain no private key.
+- SHA-1: `4d467e05e0e1a7a35024e86f97cf6c30a28e95d8`.
+- SHA-256: `9d1cf43945edd110ac5e5463699c116ff5313c8ea766f1dff16dfb12a00e6015`.
+- Valid 20 November 2026 through 20 November 2029, 13:00:40 UTC.
+- Protected environment and exact refs verified before upload; all three secret names verified afterward. Real installed-update permission retention is still pending.

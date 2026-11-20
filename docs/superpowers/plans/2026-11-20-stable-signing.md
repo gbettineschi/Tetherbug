@@ -16,3 +16,10 @@ Ruling: Existing feature worktree is isolated and reused; implementation is auth
 - actionlint 1.7.12 and shellcheck 0.11.0 passed on the changed workflow/scripts; tools ran from temporary directories and were removed.
 - Fresh independent review found no material issues. Production key/environment provisioning, hosted signing and two installed-update permission acceptance remain pending explicit activation.
 - The handover preference remains held; the owner interrupted before any network mutation. Resume the Bocconi test only after signature acceptance.
+
+## Owner-authorized activation — 20 November 2026
+
+- Owner approved the same free setup as Keepresso. Created Tetherbug-only RSA-3072/SHA-256 identity valid three years.
+- Verified owner-only environment review, no administrator bypass, and exact trial branch/version-tag rules before uploading. Three environment secrets confirmed; public certificate/fingerprints committed.
+- Temporary generation/export files removed. No personal keychain import, global trust, TCC or app change. No independent backup created.
+- Next: exact-source Mac-only A/B signed trials; actual grant retention and Bocconi handover remain pending.

@@ -1,0 +1,9 @@
+{
+  "subject": "Tetherbug Project Signing",
+  "certificateSha1": "4d467e05e0e1a7a35024e86f97cf6c30a28e95d8",
+  "certificateSha256": "9d1cf43945edd110ac5e5463699c116ff5313c8ea766f1dff16dfb12a00e6015",
+  "validity": "notBefore=Nov 20 13:00:40 2026 GMT\nnotAfter=Nov 20 13:00:40 2029 GMT",
+  "environment": "macos-release",
+  "privateKeyCustody": "protected GitHub environment secrets",
+  "independentBackupCreated": false
+}

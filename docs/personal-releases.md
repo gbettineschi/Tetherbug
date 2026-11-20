@@ -20,7 +20,7 @@ Official upstream, F-Droid or other independently signed APKs cannot update this
 
 ## macOS
 
-A [stable project-certificate signing path](macos-signing.md) is prepared, with production activation and real two-update permission acceptance pending. The following ad-hoc behaviour describes existing published builds.
+A [stable project-certificate signing path](macos-signing.md) is prepared, with the project key activated and real two-update permission acceptance pending. The following ad-hoc behaviour describes existing published builds.
 
 The release ZIP contains a universal Apple Silicon/Intel app. Quit Tetherbug, replace the existing app at the same location, and reopen it. Preserve its Application Support and preferences files. The bundle ID is unchanged; the ad-hoc signing identity is not stable across builds, so Bluetooth permission can require renewed approval. Downloads are not notarized: allow the app in System Settings → Privacy & Security if macOS blocks it.
 
