@@ -39,6 +39,36 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("EAP Keychain fallback is limited to the exact saved SSID and forbids UI in the background") {
+        let query = WifiCredentialStore.query(service: "com.apple.network.eap.user.item.wlan.ssid.Campus", interactive: false)
+        expect(query[kSecAttrService as String] as? String == "com.apple.network.eap.user.item.wlan.ssid.Campus", "one exact item, never all credentials")
+        expect(query[kSecMatchLimit as String] as? String == kSecMatchLimitOne as String, "one result")
+        expect(query[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIFail as String, "no background approval dialog")
+        expect(query[kSecAttrDescription as String] as? String == "802.1X Password", "only the native EAP credential kind")
+        let interactive = WifiCredentialStore.query(service: "Campus", interactive: true)
+        expect(interactive[kSecUseAuthenticationUI as String] as? String == kSecUseAuthenticationUIAllow as String, "explicit Settings action can request approval")
+    }
+    test("native EAP Keychain fallback decodes credentials without persisting or logging them") {
+        var queries = 0
+        do {
+            let credentials = try WifiCredentialStore.read(ssid: "Campus", lookup: { query, result in
+                queries += 1
+                let q = query as NSDictionary
+                expect(q[kSecAttrService] as? String == "com.apple.network.eap.user.item.wlan.ssid.Campus", "exact user-domain EAP item")
+                result?.pointee = [kSecAttrAccount as String: "test-user", kSecValueData as String: Data("test-secret".utf8)] as CFDictionary
+                return errSecSuccess
+            })
+            expect(credentials.username == "test-user" && credentials.password == "test-secret", "decode native account/data result")
+            expect(queries == 1, "stop after the matching item")
+        } catch { expect(false, "valid synthetic Keychain result must decode") }
+    }
+    test("Keychain fallback never treats a denied item as an absent credential") {
+        var queries = 0
+        do {
+            _ = try WifiCredentialStore.read(ssid: "Campus", lookup: { _, _ in queries += 1; return errSecInteractionNotAllowed })
+            expect(false, "approval-required lookup must fail")
+        } catch { expect(queries == 1, "do not probe other stores after access denial") }
+    }
     test("restoration waits until the original blocking association has really returned") {
         let f = HandoverFixture()
         f.startJoin()

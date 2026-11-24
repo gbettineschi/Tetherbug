@@ -79,3 +79,11 @@ Ruling: Existing Location authorization allows observing association changes eve
 - Added a regression that restoration waits for a timed-out association to actually return. Unknown or physically connected networks are never inferred offline from a missing SSID/IP path.
 - Keyless release/environment tests: 13 passed; archive signer boundary tests: 15 passed; CI signer-wrapper tests: 5 passed.
 - A signed Mac-only trial uses the existing protected identity and an exact-source branch rule, removed after acceptance. No Android runtime changes, no new certificate and no ad-hoc installation.
+
+### First signed live trial and exact EAP credential fallback
+
+- Signed trial 0.1.13-wifi.1 launched with the retained certificate, login item and phone pairing. Its public association attempt failed before joining with credentialsUnavailable; the previous private CoreWiFi entitlement error is gone. This is not yet a successful campus handover.
+- Read-only saved-profile and Keychain metadata checks found the exact WPA2 Enterprise profile and an 802.1X Password item using Apple's EAPOL service convention. No password values were displayed or copied into logs/preferences.
+- Added an exact-service, exact-802.1X-kind public Security lookup only for enterprise credentials when CoreWLAN's helper returns no usable credentials. Denied/interaction-required results still fail closed. Personal Wi-Fi retains CoreWLAN's public Wi-Fi password helper; no guessed generic-password schema is used.
+- Explicit Settings access is limited to saved enterprise profiles. It permits the native Keychain prompt only after a user action and verifies a second noninteractive read before reporting background readiness. Real worker access and association still require the next signed live test.
+- Independent credential-only review identified the enterprise kind restriction and one-time access feedback; both were addressed. The proposed personal fallback was removed altogether rather than retaining an unverified schema.

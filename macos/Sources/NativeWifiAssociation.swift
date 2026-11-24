@@ -158,7 +158,7 @@ enum CoreWLANAssociation {
             guard allowed() else { throw Failure.cancelled }
             try interface.associate(to: network, password: password as String)
         case .enterprise:
-            let (username, password, identity): (NSString?, NSString?, SecIdentity?) = try withoutKeychainInteraction {
+            var (username, password, identity): (NSString?, NSString?, SecIdentity?) = try withoutKeychainInteraction {
                 var username: NSString?
                 var password: NSString?
                 var identity: SecIdentity?
@@ -173,6 +173,11 @@ enum CoreWLANAssociation {
                     }
                 }
                 return (username, password, identity)
+            }
+            if identity == nil, (username?.length ?? 0) == 0 || (password?.length ?? 0) == 0 {
+                let saved = try withoutKeychainInteraction { try WifiCredentialStore.read(ssid: ssid) }
+                username = saved.username as NSString?
+                password = saved.password as NSString
             }
             guard identity != nil || ((username?.length ?? 0) > 0 && (password?.length ?? 0) > 0) else {
                 throw Failure.credentialsUnavailable
