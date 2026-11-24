@@ -1,13 +1,5 @@
 import Foundation
-
-private final class SavedProfileFake: NSObject, NSCopying {
-    @objc dynamic var SSID: Data
-    @objc dynamic var EAPProfile: [String: Any]?
-    init(ssid: String, eap: [String: Any]? = nil) { SSID = Data(ssid.utf8); EAPProfile = eap }
-    func copy(with zone: NSZone? = nil) -> Any {
-        SavedProfileFake(ssid: String(decoding: SSID, as: UTF8.self), eap: EAPProfile)
-    }
-}
+import CoreWLAN
 
 private final class HandoverServiceFake: WifiHandoverService {
     var scans = 0
@@ -44,61 +36,63 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
-    test("native directed scans survive the framework's secure-coding boundary") {
-        _ = dlopen("/System/Library/PrivateFrameworks/CoreWiFi.framework/CoreWiFi", RTLD_LAZY)
-        guard let type = NSClassFromString("CWFScanParameters") as? NSObject.Type else {
-            expect(false, "native scan parameters must be available on the supported test host"); return
+    test("public association selects enterprise authentication explicitly") {
+        for security: CWSecurity in [.dynamicWEP, .wpaEnterprise, .wpaEnterpriseMixed, .wpa2Enterprise, .wpa3Enterprise] {
+            expect(CoreWLANAssociation.authentication(supports: { $0 == security }) == .enterprise,
+                   "enterprise variants must never use the personal-password path")
         }
-        let parameters = NativeWifiAssociation.scanParameters(type, ssid: "Test Campus")
-        do {
-            let encoded = try NSKeyedArchiver.archivedData(withRootObject: parameters, requiringSecureCoding: true)
-            let decoded = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [type, NSString.self, NSNumber.self], from: encoded) as? NSObject
-            expect(decoded?.value(forKey: "SSID") as? String == "Test Campus", "the daemon expects a string in scan parameters, unlike raw SSID bytes in results/profiles")
-            expect(decoded?.value(forKey: "includeMatchingKnownNetworkProfiles") as? Bool == true, "keep the saved-profile lookup request")
-        } catch { expect(false, "directed scan request must decode under its real secure-coding contract") }
+        expect(CoreWLANAssociation.authentication(supports: { $0 == .wpa2Personal }) == .personal, "personal path")
+        expect(CoreWLANAssociation.authentication(supports: { $0 == .none }) == .open, "open network needs no password")
+        expect(CoreWLANAssociation.authentication(supports: { $0 == .owe }) == .open, "enhanced open needs no password")
     }
-    test("timed out native joins retain ownership until their natural reply") {
+    test("sleep and timeout cannot overlap a still-running public association") {
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let queue = DispatchQueue(label: "tetherbug.tests.association")
+        let association = NativeWifiAssociation(queue: queue, perform: { _, _, allowed in
+            expect(allowed(), "operation starts in the permitted generation")
+            entered.signal()
+            _ = release.wait(timeout: .now() + 2)
+        })
+        var firstDelivered = false
+        association.join("Test", device: "test0", allowed: { true }) { _ in firstDelivered = true }
+        expect(entered.wait(timeout: .now() + 1) == .success, "blocking operation starts")
+        association.cancel(); association.suspend(); association.resumeAfterSleep()
+        var rejected = false
+        association.join("Other", device: "test0", allowed: { true }) { rejected = !$0 }
+        expect(rejected && association.pending, "wake does not erase in-flight ownership")
+        release.signal()
+        let deadline = Date().addingTimeInterval(1)
+        while association.pending && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(!association.pending && !firstDelivered, "actual completion clears ownership, suppressing the old callback")
+    }
+    test("a cancelled queued public join never touches the radio") {
+        let queue = DispatchQueue(label: "tetherbug.tests.queued-association")
+        queue.suspend()
+        var calls = 0
+        let association = NativeWifiAssociation(queue: queue, perform: { _, _, _ in calls += 1 })
+        var delivered = false
+        association.join("Test", device: "test0", allowed: { true }) { _ in delivered = true }
+        association.suspend()
+        queue.resume()
+        let deadline = Date().addingTimeInterval(1)
+        while association.pending && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        expect(calls == 0 && !delivered && !association.pending, "sleep discards queued hardware work")
+    }
+    test("timed out native joins retain ownership until their blocking call returns") {
         var state = WifiAssociationState()
         state.submitted = true
         state.abandon()
-        expect(state.pending && !state.canDeliver, "cancellation is not proof the daemon stopped")
-        expect(!state.complete() && !state.pending, "stale natural reply clears the barrier without advancing policy")
-        expect(!state.complete(), "a duplicate callback cannot deliver")
+        expect(state.pending && !state.canDeliver, "logical timeout cannot release in-flight hardware work")
+        expect(!state.complete() && !state.pending, "the actual return releases ownership without a stale result")
+        expect(!state.complete(), "a duplicate completion cannot deliver")
     }
-    test("sleep cancellation requires full-wake reset for an already submitted native join") {
+    test("a public join returning during sleep releases ownership without delivering") {
         var state = WifiAssociationState()
         state.submitted = true
         state.abandon(forSleep: true)
-        expect(!state.complete() && state.pending, "a cancellation ACK cannot release an active native join")
-        var queued = WifiAssociationState()
-        queued.abandon(forSleep: true)
-        expect(!queued.complete() && !queued.pending, "unsubmitted work can be discarded immediately")
-    }
-    test("saved enterprise joins preserve the native EAP profile without allowing credential prompts") {
-        let original = SavedProfileFake(ssid: "Campus", eap: ["AcceptEAPTypes": [25],
-            "TLSTrustedServerNames": ["radius.example.test"], "UserName": "test-user"])
-        let copied = NativeWifiAssociation.profileForAssociation(original, ssid: Data("Campus".utf8)) as? SavedProfileFake
-        expect(copied != nil && copied !== original, "prepare an in-memory copy, never modify the saved profile")
-        expect(copied?.EAPProfile?["DisableUserInteraction"] as? Bool == true, "expired credentials fail without a new password dialog")
-        expect(copied?.EAPProfile?["AcceptEAPTypes"] as? [Int] == [25], "preserve PEAP selection")
-        expect(copied?.EAPProfile?["TLSTrustedServerNames"] as? [String] == ["radius.example.test"], "preserve server trust configuration")
-        expect(original.EAPProfile?["DisableUserInteraction"] == nil, "native saved settings stay unchanged")
-    }
-    test("native joins reject a mismatched saved profile before touching the connection") {
-        let profile = SavedProfileFake(ssid: "Campus")
-        expect(NativeWifiAssociation.profileForAssociation(profile, ssid: Data("Other".utf8)) == nil, "exact saved SSID required")
-        expect(NativeWifiAssociation.profileForAssociation(NSObject(), ssid: Data("Campus".utf8)) == nil, "unknown runtime types fail closed")
-    }
-    test("saved personal profiles do not acquire new enterprise configuration") {
-        let profile = SavedProfileFake(ssid: "Home")
-        let copied = NativeWifiAssociation.profileForAssociation(profile, ssid: Data("Home".utf8)) as? SavedProfileFake
-        expect(copied != nil && copied?.EAPProfile == nil, "leave password handling inside macOS")
-    }
-    test("enterprise profiles using system defaults still suppress credential dialogs") {
-        let profile = SavedProfileFake(ssid: "Campus")
-        let copied = NativeWifiAssociation.profileForAssociation(profile, ssid: Data("Campus".utf8), enterprise: true) as? SavedProfileFake
-        expect(copied?.EAPProfile?["DisableUserInteraction"] as? Bool == true, "unattended flag is required even with no explicit EAP dictionary")
-        expect(profile.EAPProfile == nil, "do not persist invented authentication settings")
+        expect(state.pending, "sleep does not cancel a blocking CoreWLAN call")
+        expect(!state.complete() && !state.pending, "actual return, unlike a cancellation ACK, releases ownership")
     }
     test("metadata subscription waits for unsubscribe, full read and subscribe acknowledgements") {
         var subscription = PhoneStatusSubscription()
