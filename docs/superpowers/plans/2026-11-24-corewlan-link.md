@@ -87,3 +87,27 @@ Ruling: Existing Location authorization allows observing association changes eve
 - Added an exact-service, exact-802.1X-kind public Security lookup only for enterprise credentials when CoreWLAN's helper returns no usable credentials. Denied/interaction-required results still fail closed. Personal Wi-Fi retains CoreWLAN's public Wi-Fi password helper; no guessed generic-password schema is used.
 - Explicit Settings access is limited to saved enterprise profiles. It permits the native Keychain prompt only after a user action and verifies a second noninteractive read before reporting background readiness. Real worker access and association still require the next signed live test.
 - Independent credential-only review identified the enterprise kind restriction and one-time access feedback; both were addressed. The proposed personal fallback was removed altogether rather than retaining an unverified schema.
+
+### Enterprise connection investigation after the failed trial
+
+The explicit credential-access action failed with errSecAuthFailed. This is a Keychain authorization/authentication failure, not proof that the saved network password is wrong. The failed trial build performed this read before submitting its public enterprise association request; it has therefore not established that macOS itself cannot use the saved authentication profile.
+
+A manual diagnostic using Apple's networksetup (no password supplied) returned exit0 but did not establish the authenticated enterprise connection and interrupted the user's existing connection. The user stopped further live switching. Automatic return is disabled locally pending a properly assessed approach. A subsequent Wi-Fi-bound HTTPS check succeeded; native eapolclient logs also showed successful EAP-PEAP authentication. Do not repeat this generic networksetup experiment on enterprise Wi-Fi or infer association from its exit status.
+
+Read-only examination of the installed SDK, framework method metadata and function bodies established:
+- The public enterprise CoreWLAN method forwards nullable credentials to a native user-mode 802.1X association request. Our credential prefetch/guard is an app policy, not a prerequisite established by the public API's declaration.
+- Apple's open-source supplicant has an explicit fallback to its own saved credential item when no username/password is supplied and a client item/profile is available (eapolclient.tproj/Supplicant.c, near lines3520–3565). The remaining question is whether the public association path supplies the right saved profile/item for the user's networks; this is not yet a verified end-to-end fix.
+- A tempting private method named associateTo8021XNetwork:error: actually forwards to the login-window-mode association path on this OS. Do not choose it by name or invoke it for the logged-in user flow.
+- The system Wi-Fi UI has Apple-specific Wi-Fi authentication/join privileges. Running a generic command with sudo is not evidence that it gains the UI's full saved-profile behavior.
+
+No product code was changed during this read-only investigation, no root test was performed, and no further connection method was invoked after the user's stop. Before any later live test, determine the exact user-mode profile path, prepare bounded recovery and agree the test window. The draft PR must not be merged/released as a working campus handover.
+
+Primary references: Apple's CoreWLAN CWInterface.h and enterprise association documentation; https://github.com/apple-oss-distributions/eap8021x/blob/main/eapolclient.tproj/Supplicant.c ; Apple's Security Framework Result Codes.
+
+### User-selected simplification: delegate enterprise authentication
+
+The user explicitly selected the public native API, with saved credentials handled by macOS. Removed enterprise credential prefetch, the custom Keychain helper and the credential-authorization menu. The existing exact saved SSID/security selection now directly calls the public enterprise association method with nil identity, username and password. Personal Wi-Fi keeps its existing scoped public password helper. No private association method or sudo is added.
+
+This removes the app-side gate that prevented submitting the native8021X request. It does not prove the OS will reuse the correct saved enterprise profile. Existing state/settlement/internet verification remains mandatory. Current local build is unchanged and automatic return remains disabled; no real Wi-Fi connection was changed during this implementation. Removed three obsolete helper-specific tests; the remaining131 native tests passed.
+
+The focused review found no Important/Critical regression in the simplification. macOS may still display its own authentication or certificate-trust dialog. An app timeout cannot dismiss that UI or forcibly cancel an association already submitted to the OS; Tetherbug never approves it on the user’s behalf. Prompt behavior and campus handover remain unverified.

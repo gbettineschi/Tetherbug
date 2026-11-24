@@ -14,10 +14,7 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
     private(set) var authorization = CLAuthorizationStatus.notDetermined
     private(set) var currentNetwork: String?
     private(set) var savedNetworks: [String] = []
-    private(set) var credentialNetworks: [String] = []
     var error: String?
-    var credentialMessage: String?
-    var authorizingCredentials = false
 
     var authorized: Bool { WifiAccess.authorized(authorization) }
     var permissionDenied: Bool { authorization == .denied || authorization == .restricted }
@@ -36,14 +33,10 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
         guard authorized, let interface = CWWiFiClient.shared().interface() else {
             currentNetwork = nil
             savedNetworks = []
-            credentialNetworks = []
             return
         }
         currentNetwork = interface.ssid()
         savedNetworks = WifiAccess.savedNetworks(interface).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        credentialNetworks = (interface.configuration()?.networkProfiles.array as? [CWNetworkProfile] ?? [])
-            .filter { profile in CoreWLANAssociation.authentication(supports: { $0 == profile.security }) == .enterprise }
-            .compactMap { $0.ssid }.filter { savedNetworks.contains($0) }.sorted()
     }
 
     func requestPermission() { location.requestWhenInUseAuthorization() }
@@ -58,31 +51,6 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
     }
 
     func remove(_ name: String) { networks.removeAll { $0 == name }; error = nil }
-
-    /// Only an explicit Settings action may display the system's credential-access prompt.
-    func authorizeCredentials(for name: String) {
-        guard !authorizingCredentials, authorized,
-              let profile = (CWWiFiClient.shared().interface()?.configuration()?.networkProfiles.array as? [CWNetworkProfile])?
-                .first(where: { $0.ssidData == Data(name.utf8) && $0.security != .unknown }) else { return }
-        let authentication = CoreWLANAssociation.authentication(supports: { $0 == profile.security })
-        guard authentication == .enterprise else { return }
-        authorizingCredentials = true
-        credentialMessage = nil
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let message: String
-            do {
-                _ = try WifiCredentialStore.read(ssid: name, interactive: true)
-                _ = try CoreWLANAssociation.withoutKeychainInteraction { try WifiCredentialStore.read(ssid: name) }
-                message = "Saved credentials are available for automatic switching to \(name)."
-            } catch {
-                message = "macOS did not provide saved credentials for \(name) (code \((error as NSError).code))."
-            }
-            DispatchQueue.main.async {
-                self?.authorizingCredentials = false
-                self?.credentialMessage = message
-            }
-        }
-    }
 }
 
 struct PreferredWifiSection: View {
@@ -119,17 +87,6 @@ struct PreferredWifiSection: View {
                         .buttonStyle(.borderless)
                         .accessibilityLabel("Remove \(network)")
                         .help("Remove network")
-                    }
-                }
-                if model.authorized {
-                    Menu("Allow saved Wi-Fi credentials…") {
-                        ForEach(model.credentialNetworks, id: \.self) { network in
-                            Button(network) { model.authorizeCredentials(for: network) }
-                        }
-                    }
-                    .disabled(model.authorizingCredentials || model.credentialNetworks.isEmpty)
-                    if let message = model.credentialMessage {
-                        Text(message).font(.callout).foregroundStyle(.secondary)
                     }
                 }
                 HStack {

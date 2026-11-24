@@ -158,35 +158,12 @@ enum CoreWLANAssociation {
             guard allowed() else { throw Failure.cancelled }
             try interface.associate(to: network, password: password as String)
         case .enterprise:
-            var (username, password, identity): (NSString?, NSString?, SecIdentity?) = try withoutKeychainInteraction {
-                var username: NSString?
-                var password: NSString?
-                var identity: SecIdentity?
-                for domain: CWKeychainDomain in [.user, .system] {
-                    if try credentialFound(CWKeychainFindWiFiEAPUsernameAndPassword(domain, data, &username, &password)) { break }
-                }
-                for domain: CWKeychainDomain in [.user, .system] {
-                    var value: Unmanaged<SecIdentity>?
-                    if try credentialFound(CWKeychainCopyWiFiEAPIdentity(domain, data, &value)) {
-                        identity = value?.takeRetainedValue()
-                        break
-                    }
-                }
-                return (username, password, identity)
-            }
-            if identity == nil, (username?.length ?? 0) == 0 || (password?.length ?? 0) == 0 {
-                let saved = try withoutKeychainInteraction { try WifiCredentialStore.read(ssid: ssid) }
-                username = saved.username as NSString?
-                password = saved.password as NSString
-            }
-            guard identity != nil || ((username?.length ?? 0) > 0 && (password?.length ?? 0) > 0) else {
-                throw Failure.credentialsUnavailable
-            }
             guard allowed() else { throw Failure.cancelled }
-            // Missing/denied credentials fail closed. Never invent an EAP profile or disable
-            // server-certificate validation to force an unattended join.
-            try interface.associate(toEnterpriseNetwork: network, identity: identity,
-                                    username: username as String?, password: password as String?)
+            // Start native user-mode 802.1X without first extracting its saved credentials.
+            // macOS owns authentication and trust. Nil is not a promise of saved-profile
+            // reuse: completion still needs observed association and an internet check.
+            try interface.associate(toEnterpriseNetwork: network, identity: nil,
+                                    username: nil, password: nil)
         }
     }
 }
