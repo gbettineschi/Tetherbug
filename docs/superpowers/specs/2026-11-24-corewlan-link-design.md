@@ -19,3 +19,11 @@ Keep preferred-network order, minute scans, five-minute failure backoff, stable-
 ## Constraints and verification
 
 Mac only; no Android update. Preserve settings, phone pairing, retained signing identity, launch at login and the single installed /Applications/Tetherbug.app. Tests must not change a real network or prompt for credentials. Verify disconnected, connected-without-internet, powered-off and unknown-link cases; enterprise/personal routing; cancelled and in-flight association ownership. Build and verify with the retained signer before installing in place. A real campus handover is separate evidence and must not be claimed from unit tests.
+
+## Temporary hotspot preference (additional user instructions)
+
+Add a native “Prefer hotspot for…” submenu, including 6 hours and an explicit stop action. The preference has its own persisted deadline, independent of Automatic Mode suspension; choices replace rather than add time. Only menu cancellation or expiry clears it, per the user's explicit answer: a return to preferred Wi-Fi must not cancel it.
+
+During that preference, skip return-to-preferred attempts. When the paired phone hotspot is already on, it becomes the target network, even if the present Wi-Fi works. Do not turn it on just because the preference starts on healthy Wi-Fi. Only in this mode, detect unusable associated Wi-Fi using two interface-bound failed internet probes before requesting hotspot On. Normal mode never enables hotspot for poor internet on an associated Wi-Fi.
+
+Use the same association/settling/verification/restoration state machine in both directions. After a network change not owned by Tetherbug, delay application-initiated switching for five minutes in either direction; a subsequent external change replaces the deadline with five minutes from that change. A failed candidate also gets five-minute backoff; scans remain at most once per minute. A known disconnected link can still use the existing five-second hotspot activation delay. The OS may independently auto-join; this policy only governs Tetherbug. Sleep cancels probes and invalidates callbacks. Keep one network operation owner and never overlap scans/joins/probes.

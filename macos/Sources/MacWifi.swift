@@ -2,8 +2,22 @@ import CoreLocation
 import CoreWLAN
 import Foundation
 import Network
+import SystemConfiguration
+
+enum WifiInternetResult { case online, offline, unavailable }
 
 enum WifiAccess {
+    static func isDisconnected(poweredOn: Bool, linkActive: Bool?) -> Bool {
+        poweredOn && linkActive == false
+    }
+
+    /// Physical association is independent of DHCP, captive portals and internet availability.
+    static func linkActive(device: String) -> Bool? {
+        let key = SCDynamicStoreKeyCreateNetworkInterfaceEntity(nil, kSCDynamicStoreDomainState,
+            device as CFString, kSCEntNetLink)
+        guard let value = SCDynamicStoreCopyValue(nil, key) as? [String: Any] else { return nil }
+        return value[kSCPropNetLinkActive as String] as? Bool
+    }
     static func authorized(_ status: CLAuthorizationStatus) -> Bool {
         status == .authorizedAlways
     }
@@ -15,7 +29,7 @@ enum WifiAccess {
 }
 
 /// Main-queue owner of cancellable native operations. Blocking scans share the agent's scan queue.
-/// Saved credentials stay inside macOS's native known-profile association path.
+/// Saved credentials are read only for the exact target through public CoreWLAN helpers.
 final class MacWifiHandoverService: WifiHandoverService {
     private let activity: PowerActivity
     private let queue: DispatchQueue
@@ -28,6 +42,7 @@ final class MacWifiHandoverService: WifiHandoverService {
     private lazy var location = CLLocationManager()
 
     var locationAllowed: Bool { WifiAccess.authorized(location.authorizationStatus) }
+    var associationPending: Bool { association.pending }
 
     func suspend() { cancel(); association.suspend() }
     func resumeAfterSleep() { association.resumeAfterSleep() }
@@ -100,9 +115,13 @@ final class MacWifiHandoverService: WifiHandoverService {
     /// TLS authenticates the endpoint; requiring the Wi-Fi interface prevents Ethernet or a VPN
     /// from making an unusable candidate appear to work. No persistent connection or timer remains.
     func verifyInternet(_ completion: @escaping (Bool) -> Void) {
+        probeInternet { completion($0 == .online) }
+    }
+
+    func probeInternet(_ completion: @escaping (WifiInternetResult) -> Void) {
         let token = begin()
         guard allows(token), let interface = wifiInterface(),
-              interface.name == CWWiFiClient.shared().interface()?.interfaceName else { completion(false); return }
+              interface.name == CWWiFiClient.shared().interface()?.interfaceName else { completion(.unavailable); return }
         let parameters = NWParameters.tls
         parameters.requiredInterface = interface
         parameters.prohibitedInterfaceTypes = [.cellular, .wiredEthernet, .loopback, .other]
@@ -117,7 +136,7 @@ final class MacWifiHandoverService: WifiHandoverService {
             self.connection = nil
             probe.stateUpdateHandler = nil
             probe.cancel()
-            completion(success)
+            completion(success ? .online : .offline)
         }
         probe.stateUpdateHandler = { state in
             switch state {

@@ -435,7 +435,7 @@ struct ContentView: View {
             }
 
             Section("Automatic activation") {
-                Toggle("Turn on hotspot when Wi-Fi is unavailable", isOn: $model.onNoWifi)
+                Toggle("Turn on hotspot when disconnected from Wi-Fi", isOn: $model.onNoWifi)
                 if model.onNoWifi {
                     LabeledContent("Wait before turning on") {
                         HStack(spacing: 6) {
@@ -456,7 +456,8 @@ struct ContentView: View {
                 }
             }
 
-            PreferredWifiSection(hotspotSSID: phone?.ssid, message: state?.wifiHandoverMessage)
+            PreferredWifiSection(hotspotSSID: phone?.ssid, message: state?.wifiHandoverMessage,
+                                 prefersHotspot: state?.preferHotspotUntil != nil)
 
             Section("General") {
                 if let job = state?.managedBy {

@@ -60,11 +60,11 @@ Use this fork’s release downloads to retain the patches. See [personal release
 In Tetherbug Settings, enable **Return to preferred Wi-Fi**, allow Wi-Fi network access, and add
 your home, university or other saved networks. You can choose **Add Saved Network…**, **Use Current
 Network**, or type the exact Wi-Fi name. Connect to a new network normally in macOS once before
-adding it here; Tetherbug uses macOS’s saved credentials and does not collect passwords.
+adding it here; Tetherbug reads credentials only for the selected saved network through public CoreWLAN Keychain helpers. It never logs or stores them. If Keychain access is denied or credentials are missing, the background join fails without requesting a password.
 
 While the Mac is fully awake, Automatic Mode is active and the phone hotspot is on, Tetherbug
 checks for listed networks at most once per minute. It tries them in list order when using the
-phone’s hotspot or when Wi-Fi is disconnected, leaving an unrelated working Wi-Fi connection alone.
+phone’s hotspot or when Wi-Fi is disconnected, leaving an unrelated Wi-Fi connection alone, including one without internet. After a network change not initiated by Tetherbug, application-initiated switches wait five minutes; another such change restarts that wait.
 After joining, it waits three seconds for a stable connection and checks Apple’s HTTPS connectivity
 endpoint over Wi-Fi. Only then does it turn off the hotspot. This also works if macOS joins a listed
 network itself. Captive portals and failed internet checks keep the hotspot on; an unsuccessful
@@ -158,3 +158,13 @@ select an installed 26.x SDK using `SDKROOT` for both commands. This local build
 In Automatic mode, a fresh On-to-Off phone status report starts a 5-minute pause only while the Tetherbug Bluetooth connection remains active. Wi-Fi loss by itself does not create a cooldown. Disconnecting Bluetooth clears the status baseline, so an Off state first discovered after reconnection does not count as a nearby shutdown. Automatic cooldowns do not shorten a longer user-selected suspension or re-enable mode that was switched off.
 
 The pause is saved across app restarts and shown beside Automatic mode. Turning Mobile Hotspot on manually from the Mac cancels it. Repeated Off reports do not restart the timer. Android's existing status reports do not identify whether shutdown was manual or Samsung's native idle timeout: both can satisfy the nearby-connected criterion. This is a proximity rule, not proof of a voluntary shutdown.
+
+### Prefer hotspot temporarily
+
+The native menu’s **Prefer hotspot for…** submenu offers 15/30 minutes, 1/2/3/6 hours and Today. Choosing a duration replaces the current deadline; **Stop preferring hotspot** cancels it. The deadline survives restart. Joining another Wi-Fi does not cancel it. Automatic Mode and its pauses remain the overall switch for automation.
+
+While this preference is active, Tetherbug does not try to return to the listed networks. A paired hotspot which is already on becomes the preferred connection. Healthy Wi-Fi alone does not cause it to turn the phone hotspot on. Only in this explicit preference, unusable Wi-Fi can trigger hotspot activation: after a 30-second settling grace, two Wi-Fi-bound failed checks at least 15 seconds apart are required. An unavailable check is not counted as internet failure. A successful check resets the failure count; subsequent checks are at most once a minute. A failed activation backs off five minutes.
+
+Both switch directions use the same five-minute courtesy delay after a non-owned network change, verification and failure backoff. A failed hotspot handover attempts to restore the original Wi-Fi; failed restoration retries after five minutes, never overlapping a still-running CoreWLAN association. macOS can independently auto-join networks; the courtesy delay governs Tetherbug’s own attempts.
+
+Outside hotspot preference, an associated Wi-Fi never triggers hotspot activation merely because DHCP or internet fails. Only a confirmed physical disconnection, with Wi-Fi powered on, can trigger the existing automatic activation delay. Sleep/DarkWake suspends all app radio work and invalidates probe completions; public synchronous operations already submitted to macOS cannot be forcibly cancelled and retain ownership until they return.

@@ -128,6 +128,8 @@ struct AgentState: Codable, Equatable {
     var requestError: String?
     /// Optional Mac-only Wi-Fi handover progress; absent in older agents.
     var wifiHandoverMessage: String?
+    var preferHotspotUntil: Date?
+    var wifiSwitchNotBefore: Date?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
     /// Local Mac worker identity; optional for compatibility with older snapshots.

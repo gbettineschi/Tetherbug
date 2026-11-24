@@ -1,6 +1,7 @@
 import CoreWLAN
 import Foundation
 import Security
+import OSLog
 
 /// A timeout/cancellation does not stop a blocking public CoreWLAN association.
 struct WifiAssociationState {
@@ -63,7 +64,8 @@ final class NativeWifiAssociation {
                 } catch {
                     let error = error as NSError
                     // Never log localizedDescription/userInfo: they can contain credentials.
-                    log("CoreWLAN association failed (\(error.domain), code \(error.code))")
+                    Logger(subsystem: "ie.xav.tetherbug", category: "wifi").error(
+                        "CoreWLAN association failed (\(error.domain, privacy: .public), code \(error.code))")
                 }
             }
             let result = success
@@ -84,12 +86,37 @@ final class NativeWifiAssociation {
 enum CoreWLANAssociation {
     enum Failure: Error { case unavailable, notSaved, notVisible, cancelled, credentialsUnavailable }
     enum Authentication { case open, personal, enterprise }
+    private static let keychainLock = NSRecursiveLock()
+
+    static func matches(savedSSID: Data, security: CWSecurity, networkSSID: Data?, supports: (CWSecurity) -> Bool) -> Bool {
+        savedSSID == networkSSID && security != .unknown && supports(security)
+    }
+
+    static func credentialFound(_ status: OSStatus) throws -> Bool {
+        if status == errSecSuccess { return true }
+        if status == errSecItemNotFound || status == errSecNoSuchKeychain { return false }
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+    }
+
+    /// CoreWLAN's helpers use the legacy macOS Wi-Fi Keychain. Its documented interaction
+    /// switch is process-local; serialize it and always restore it, including when lookup fails.
+    static func withoutKeychainInteraction<T>(_ body: () throws -> T) throws -> T {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+        var original: DarwinBoolean = false
+        guard SecKeychainGetUserInteractionAllowed(&original) == errSecSuccess,
+              SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else {
+            throw Failure.credentialsUnavailable
+        }
+        defer { _ = SecKeychainSetUserInteractionAllowed(original.boolValue) }
+        return try body()
+    }
 
     static func authentication(supports: (CWSecurity) -> Bool) -> Authentication {
         if [.enterprise, .dynamicWEP, .wpaEnterprise, .wpaEnterpriseMixed, .wpa2Enterprise, .wpa3Enterprise].contains(where: supports) {
             return .enterprise
         }
-        if [.none, .owe, .oweTransition].contains(where: supports) { return .open }
+        if [.none, .OWE, .oweTransition].contains(where: supports) { return .open }
         return .personal
     }
 
@@ -98,42 +125,61 @@ enum CoreWLANAssociation {
         guard let interface = CWWiFiClient.shared().interface(withName: device), interface.powerOn() else {
             throw Failure.unavailable
         }
-        guard WifiAccess.savedNetworks(interface).contains(ssid) else { throw Failure.notSaved }
         let data = Data(ssid.utf8)
+        let profiles = (interface.configuration()?.networkProfiles.array as? [CWNetworkProfile] ?? [])
+            .filter { $0.ssidData == data && $0.security != .unknown }
+        guard !profiles.isEmpty else { throw Failure.notSaved }
+        guard interface.configuration()?.requireAdministratorForAssociation != true else { throw Failure.unavailable }
         guard allowed() else { throw Failure.cancelled }
         let networks = try interface.scanForNetworks(withSSID: data)
-        guard let network = networks.filter({ $0.ssidData == data }).max(by: { $0.rssiValue < $1.rssiValue }) else {
+        let matches = networks.compactMap { network -> (CWNetwork, CWNetworkProfile)? in
+            guard let profile = profiles.first(where: {
+                Self.matches(savedSSID: data, security: $0.security, networkSSID: network.ssidData,
+                        supports: network.supportsSecurity)
+            }) else { return nil }
+            return (network, profile)
+        }
+        guard let (network, profile) = matches.max(by: { $0.0.rssiValue < $1.0.rssiValue }) else {
             throw Failure.notVisible
         }
         guard allowed() else { throw Failure.cancelled }
-        switch authentication(supports: network.supportsSecurity) {
+        switch authentication(supports: { $0 == profile.security }) {
         case .open:
             try interface.associate(to: network, password: nil)
         case .personal:
-            var password: NSString?
-            for domain: CWKeychainDomain in [.user, .system] {
-                if CWKeychainFindWiFiPassword(domain, data, &password) == errSecSuccess { break }
+            let password: NSString? = try withoutKeychainInteraction {
+                var value: NSString?
+                for domain: CWKeychainDomain in [.user, .system] {
+                    if try credentialFound(CWKeychainFindWiFiPassword(domain, data, &value)) { break }
+                }
+                return value
             }
             guard let password else { throw Failure.credentialsUnavailable }
             guard allowed() else { throw Failure.cancelled }
             try interface.associate(to: network, password: password as String)
         case .enterprise:
-            var username: NSString?
-            var password: NSString?
-            var identity: SecIdentity?
-            for domain: CWKeychainDomain in [.user, .system] {
-                if CWKeychainFindWiFiEAPUsernameAndPassword(domain, data, &username, &password) == errSecSuccess { break }
-            }
-            for domain: CWKeychainDomain in [.user, .system] {
-                var value: Unmanaged<SecIdentity>?
-                if CWKeychainCopyWiFiEAPIdentity(domain, data, &value) == errSecSuccess {
-                    identity = value?.takeRetainedValue()
-                    break
+            let (username, password, identity): (NSString?, NSString?, SecIdentity?) = try withoutKeychainInteraction {
+                var username: NSString?
+                var password: NSString?
+                var identity: SecIdentity?
+                for domain: CWKeychainDomain in [.user, .system] {
+                    if try credentialFound(CWKeychainFindWiFiEAPUsernameAndPassword(domain, data, &username, &password)) { break }
                 }
+                for domain: CWKeychainDomain in [.user, .system] {
+                    var value: Unmanaged<SecIdentity>?
+                    if try credentialFound(CWKeychainCopyWiFiEAPIdentity(domain, data, &value)) {
+                        identity = value?.takeRetainedValue()
+                        break
+                    }
+                }
+                return (username, password, identity)
+            }
+            guard identity != nil || ((username?.length ?? 0) > 0 && (password?.length ?? 0) > 0) else {
+                throw Failure.credentialsUnavailable
             }
             guard allowed() else { throw Failure.cancelled }
-            // Nil fields permit native saved/system authentication. Never invent an EAP profile
-            // or disable server-certificate validation to force an unattended join.
+            // Missing/denied credentials fail closed. Never invent an EAP profile or disable
+            // server-certificate validation to force an unattended join.
             try interface.associate(toEnterpriseNetwork: network, identity: identity,
                                     username: username as String?, password: password as String?)
         }

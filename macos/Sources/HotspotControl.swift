@@ -1,7 +1,7 @@
 import Foundation
 
 enum AutomaticPauseDuration: String, CaseIterable {
-    case minutes15, minutes30, hour1, hours2, hours3, today, indefinitely
+    case minutes15, minutes30, hour1, hours2, hours3, hours6, today, indefinitely
 
     var title: String {
         switch self {
@@ -10,6 +10,7 @@ enum AutomaticPauseDuration: String, CaseIterable {
         case .hour1: return "1 hour"
         case .hours2: return "2 hours"
         case .hours3: return "3 hours"
+        case .hours6: return "6 hours"
         case .today: return "Today"
         case .indefinitely: return "Indefinitely"
         }
@@ -22,6 +23,7 @@ enum AutomaticPauseDuration: String, CaseIterable {
         case .hour1: return now.addingTimeInterval(60 * 60)
         case .hours2: return now.addingTimeInterval(2 * 60 * 60)
         case .hours3: return now.addingTimeInterval(3 * 60 * 60)
+        case .hours6: return now.addingTimeInterval(6 * 60 * 60)
         case .today: return calendar.dateInterval(of: .day, for: now)?.end
         case .indefinitely: return nil
         }

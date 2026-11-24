@@ -49,3 +49,33 @@ Files: macos/Sources/Agent.swift, macos/Sources/MacWifi.swift, macos/Sources/Wif
 - Clean baseline: 113 native Mac tests, zero failures.
 - Reused the existing clean isolated worktree on codex/corewlan-wifi-state from main 8b81017; no new app copies or Android changes.
 - Clarification received: retain preferred-network return; hotspot activation requires actual Wi-Fi disconnection.
+
+## Task 3: Timed hotspot preference and shared switching cooldown
+
+Files: macos/Sources/WifiPreferenceControl.swift, macos/Sources/WifiHandover.swift, macos/Sources/MenuBar.swift, macos/Sources/Agent.swift, macos/Sources/Protocol.swift, macos/Tests/WifiPreferenceTests.swift, macos/Tests/MenuBarTests.swift, macos/test.sh.
+
+- [ ] Add failing policy tests: six-hour persisted deadline, replacement, menu cancellation/expiry only, external-change five-minute cooldown in both directions, no delay for owned changes, no-quality fallback outside the preference, two failed probes, stale callbacks and sleep.
+- [ ] Implement one shared handover state machine for both directions plus a bounded hotspot-preference internet-check policy; arbitrate one service owner. Add native duration submenu, six-hour choice and stop action; preserve stable checkmark spacing.
+- [ ] Run the complete native suite and universal build. Review all changes, preserve the retained signer, install one app in place and record real test limits.
+
+## Execution notes
+
+- Task 1 RED: blocking-call completion during sleep left ownership stuck under the old private adapter (108 tests, 1 failure).
+- Task 1 extra RED: enterprise security variants/OWE routed incorrectly in the first public adapter (111 tests, 5 assertions); corrected explicit public security selection.
+- Additional scope is user-requested. Temporary hotspot preference overrides disconnected-only activation solely while its timer and Automatic Mode are active. Expiry/menu only cancellation was explicitly chosen.
+
+### Final independent review and fix pass
+
+The independent reviewer identified important cases: saved security downgrade, interactive or empty enterprise credentials, unavailable probes counted as failures, unknown association counted as offline, stale attempt ownership, failed restoration stuck on a bad hotspot, switching with Shizuku unavailable, manual changes just before preference activation, and stale/competing cache scans. Added scoped regressions and corrected them in one fix pass. Confirmed SystemConfiguration’s public physical-link read on this Mac returns Active=true. Native suite after this pass: 129 tests, zero failures (before the final strengthened interaction assertion and cache guard).
+
+Ruling: CoreWLAN’s legacy Wi-Fi Keychain helpers need the public legacy Security interaction switch to guarantee unattended lookups. Serialize and scope that process-local switch, restore it on exceptions, and fail closed on denied/interaction-required credentials; do not invent an enterprise profile or assume nil credentials are reused. SDK deprecation warnings are expected for this narrowly scoped switch.
+Ruling: Six hours is also offered in the general Automatic Mode duration list, reusing the same native duration type; hotspot preference has no indefinite option because the request is temporary.
+Ruling: Existing Location authorization allows observing association changes even when return-to-preferred is disabled, so a newly selected hotspot preference respects a just-made external network choice. No location updates are requested.
+
+### Verification before the signed trial
+
+- Independent review completed; all Important findings were addressed. No review items were declined as outside scope. The documentation minor was corrected.
+- Added courtesy handling for an explicit physical disconnection, without repeatedly extending it during the disconnected interval. This prevents immediately retrying the Wi-Fi the user deliberately left; normal hotspot activation still uses its existing five-second delay.
+- Added a regression that restoration waits for a timed-out association to actually return. Unknown or physically connected networks are never inferred offline from a missing SSID/IP path.
+- Keyless release/environment tests: 13 passed; archive signer boundary tests: 15 passed; CI signer-wrapper tests: 5 passed.
+- A signed Mac-only trial uses the existing protected identity and an exact-source branch rule, removed after acceptance. No Android runtime changes, no new certificate and no ad-hoc installation.

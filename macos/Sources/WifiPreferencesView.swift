@@ -56,6 +56,7 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
 struct PreferredWifiSection: View {
     var hotspotSSID: String?
     var message: String?
+    var prefersHotspot = false
     @State private var model = WifiPreferencesModel()
     @State private var name = ""
     @Environment(\.scenePhase) private var scenePhase
@@ -63,8 +64,8 @@ struct PreferredWifiSection: View {
     var body: some View {
         Section("Preferred Wi-Fi") {
             Toggle("Return to preferred Wi-Fi", isOn: $model.enabled)
-            if model.enabled {
-                Text("Connect to a listed network, then turn off the phone’s hotspot once internet access works. Follows Automatic Mode and its pauses.")
+            if model.enabled || prefersHotspot {
+                Text(prefersHotspot ? "Hotspot preference is active. Wi-Fi network access is required for automatic switching. Follows Automatic Mode and its pauses." : "Connect to a listed network, then turn off the phone’s hotspot once internet access works. Follows Automatic Mode and its pauses.")
                     .font(.callout).foregroundStyle(.secondary)
                 if !model.authorized {
                     Text("macOS requires Location access to identify Wi-Fi networks. Tetherbug does not request location updates.")

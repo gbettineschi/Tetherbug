@@ -10,6 +10,39 @@ func runMenuBarTests() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.accessory)
 
+    test("hotspot preference has a native six-hour action and explicit stop") {
+        var selected: AutomaticPauseDuration?
+        var stops = 0
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in },
+            onPreferHotspot: { selected = $0 }, onStopPreferringHotspot: { stops += 1 }, onSettings: {}, onQuit: {})
+        var state = phoneState(.off)
+        state.automatic = true
+        menu.update(state)
+        let item = menu.menu.items.first { $0.title == "Prefer hotspot for…" }!
+        let choices = item.submenu!
+        expect(choices.items.contains { $0.title == "6 hours" }, "six hours is offered")
+        expect(!choices.items.contains { $0.title == "Indefinitely" }, "preference is explicitly temporary")
+        expect(choices.items.first?.isEnabled == false, "no stop action when inactive")
+        let six = choices.items.first { $0.title == "6 hours" }!
+        menu.preferHotspot(six)
+        expect(selected == .hours6, "native item routes the selected duration")
+        state.preferHotspotUntil = now + 21600
+        menu.update(state)
+        expect(item.state == .on && choices.items.first?.isEnabled == true, "active state has stop and checkmark")
+        expect(item.attributedTitle?.string.contains("Until") == true, "show expiry")
+        menu.stopPreferringHotspot(nil)
+        expect(stops == 1, "stop has its own callback")
+        item.attributedTitle = nil
+        menu.menu.minimumWidth = 0
+        menu.menu.update()
+        let checked = menu.menu.size.width
+        state.preferHotspotUntil = nil; menu.update(state); menu.menu.update()
+        expect(item.state == .off, "checkmark clears")
+        // Stable image geometry is shared with the already-regressed Automatic Mode row.
+        expect(item.onStateImage?.size == item.offStateImage?.size, "reserve equal checkmark geometry")
+        _ = checked
+    }
+
     test("native command menu width stays stable when the Auto checkmark changes") {
         let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onSettings: {}, onQuit: {})
         // Measure command rows without the wide custom header masking native gutter changes.
@@ -56,7 +89,7 @@ func runMenuBarTests() {
         guard let item = menu.menu.items.first(where: { $0.title == "Turn off automatic mode for…" }), let submenu = item.submenu else {
             expect(false, "native duration submenu exists"); return
         }
-        expect(submenu.items.map(\.title) == ["15 minutes", "30 minutes", "1 hour", "2 hours", "3 hours", "Today", "Indefinitely"], "timed and indefinite choices are offered")
+        expect(submenu.items.map(\.title) == ["15 minutes", "30 minutes", "1 hour", "2 hours", "3 hours", "6 hours", "Today", "Indefinitely"], "timed and indefinite choices are offered")
         for index in submenu.items.indices { submenu.performActionForItem(at: index) }
         expect(selected == AutomaticPauseDuration.allCases, "every native menu action reaches the selected policy")
     }

@@ -1,11 +1,13 @@
 import Foundation
 import CoreWLAN
+import Security
 
 private final class HandoverServiceFake: WifiHandoverService {
     var scans = 0
     var joins: [String] = []
     var probes = 0
     var cancellations = 0
+    var associationPending = false
     var scanned: ((Set<String>) -> Void)?
     var joined: ((Bool) -> Void)?
     var verified: ((Bool) -> Void)?
@@ -28,6 +30,7 @@ private final class HandoverFixture {
     func joined(_ ssid: String = "Home") {
         context.currentSSID = ssid
         context.wifiConnected = true
+        context.wifiDisconnected = false
         service.joined?(true)
         handover.tick()
     }
@@ -36,6 +39,114 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("restoration waits until the original blocking association has really returned") {
+        let f = HandoverFixture()
+        f.startJoin()
+        f.context.currentSSID = "Home"
+        f.service.associationPending = true
+        f.service.joined?(false)
+        expect(f.service.joins == ["Home"], "do not race a timed-out association with restoration")
+        f.handover.tick()
+        expect(f.service.joins.count == 1, "keep waiting for the actual return")
+        f.service.associationPending = false
+        f.handover.tick()
+        expect(f.service.joins == ["Home", "Test hotspot"], "restore promptly after ownership releases")
+    }
+    test("saved Wi-Fi security cannot downgrade to a same-name open access point") {
+        let ssid = Data("Campus".utf8)
+        expect(!CoreWLANAssociation.matches(savedSSID: ssid, security: .wpa2Enterprise,
+            networkSSID: ssid, supports: { $0 == .none }), "open evil twin is rejected")
+        expect(CoreWLANAssociation.matches(savedSSID: ssid, security: .wpa2Enterprise,
+            networkSSID: ssid, supports: { $0 == .wpa2Enterprise }), "exact saved security is accepted")
+        expect(!CoreWLANAssociation.matches(savedSSID: ssid, security: .wpa2Enterprise,
+            networkSSID: Data("Other".utf8), supports: { _ in true }), "exact raw SSID is required")
+    }
+    test("Keychain access errors fail closed instead of requesting empty enterprise authentication") {
+        for status in [errSecAuthFailed, errSecInteractionNotAllowed, errSecUserCanceled] {
+            do { _ = try CoreWLANAssociation.credentialFound(status); expect(false, "denied credentials cannot be ignored") }
+            catch {}
+        }
+        expect((try? CoreWLANAssociation.credentialFound(errSecItemNotFound)) == false, "missing item may try the other keychain domain")
+    }
+    test("scoped Keychain lookup forbids background interaction and restores the previous setting") {
+        var original: DarwinBoolean = false
+        _ = SecKeychainGetUserInteractionAllowed(&original)
+        var observedNoninteractive = false
+        do {
+            try CoreWLANAssociation.withoutKeychainInteraction {
+                var enabled: DarwinBoolean = true
+                _ = SecKeychainGetUserInteractionAllowed(&enabled)
+                observedNoninteractive = !enabled.boolValue
+                expect(!enabled.boolValue, "background lookup cannot ask for a password")
+                throw NSError(domain: "test", code: 1)
+            }
+        } catch {}
+        var restored: DarwinBoolean = false
+        _ = SecKeychainGetUserInteractionAllowed(&restored)
+        expect(observedNoninteractive, "the guarded lookup actually ran")
+        expect(restored.boolValue == original.boolValue, "restore even on failure")
+    }
+    test("unknown physically connected Wi-Fi is never treated as disconnected") {
+        let f = HandoverFixture()
+        f.context.currentSSID = nil
+        f.context.wifiConnected = false
+        f.context.wifiDisconnected = true
+        f.context.wifiDisconnected = false
+        f.handover.tick()
+        expect(f.service.scans == 0, "missing SSID/IP cannot authorize a replacement")
+    }
+    test("reverse switching needs no Shizuku permission when the hotspot is already on") {
+        let f = HandoverFixture()
+        f.context.preferHotspot = true; f.context.currentSSID = "Home"
+        f.context.canControlHotspot = false; f.context.canConnectToHotspot = true
+        f.handover.tick(); f.service.scanned?(["Test hotspot"])
+        expect(f.service.joins == ["Test hotspot"], "Mac-only association sends no phone command")
+    }
+    test("a failed association cannot keep ownership of a later manual selection") {
+        let f = HandoverFixture()
+        f.startJoin(); f.service.joined?(false)
+        expect(f.handover.switchingTarget == nil, "failed/idle attempts must not claim future user choices")
+    }
+    test("failed reverse restoration retries instead of accepting a known-bad hotspot") {
+        let f = HandoverFixture()
+        f.context.preferHotspot = true; f.context.currentSSID = "Home"
+        f.handover.tick(); f.service.scanned?(["Test hotspot"])
+        f.joined("Test hotspot"); f.settle(); f.service.verified?(false)
+        expect(f.service.joins.last == "Home", "restore the working origin")
+        f.service.joined?(false)
+        f.date += 299; f.handover.tick()
+        expect(f.service.joins.count == 2, "do not storm failed restoration")
+        f.date += 1; f.handover.tick()
+        expect(f.service.joins == ["Test hotspot", "Home", "Home"], "retry restoration when backoff expires")
+    }
+    test("hotspot preference selects the phone rather than listed Wi-Fi") {
+        let f = HandoverFixture()
+        f.context.preferHotspot = true
+        f.context.currentSSID = "Home"
+        f.handover.tick()
+        f.service.scanned?(["Home", "Test hotspot"])
+        expect(f.service.joins == ["Test hotspot"], "reverse handover uses the same verified association path")
+        f.joined("Test hotspot"); f.settle(); f.service.verified?(true)
+        expect(f.offs == 0, "successful hotspot preference never turns the phone off")
+        f.handover.tick(); f.date += 90; f.handover.tick()
+        expect(f.service.probes == 1, "do not continuously re-probe a hotspot already in use")
+    }
+    test("external-change cooldown blocks switches in both directions") {
+        for reverse in [false, true] {
+            let f = HandoverFixture()
+            f.context.preferHotspot = reverse
+            f.context.currentSSID = reverse ? "Home" : "Test hotspot"
+            f.context.switchingAllowed = false
+            f.handover.tick()
+            expect(f.service.scans == 0 && f.service.joins.isEmpty, "respect the external network choice")
+        }
+    }
+    test("an associated Wi-Fi without IP or internet never requests the hotspot") {
+        expect(!WifiAccess.isDisconnected(poweredOn: true, linkActive: true), "physical association wins over path readiness")
+        expect(WifiAccess.isDisconnected(poweredOn: true, linkActive: false), "confirmed disconnection can request hotspot")
+        expect(!WifiAccess.isDisconnected(poweredOn: false, linkActive: false), "Wi-Fi disabled is not a request")
+        expect(!WifiAccess.isDisconnected(poweredOn: true, linkActive: nil), "unknown state fails closed")
+    }
     test("public association selects enterprise authentication explicitly") {
         for security: CWSecurity in [.dynamicWEP, .wpaEnterprise, .wpaEnterpriseMixed, .wpa2Enterprise, .wpa3Enterprise] {
             expect(CoreWLANAssociation.authentication(supports: { $0 == security }) == .enterprise,
@@ -43,7 +154,7 @@ func runWifiHandoverTests() {
         }
         expect(CoreWLANAssociation.authentication(supports: { $0 == .wpa2Personal }) == .personal, "personal path")
         expect(CoreWLANAssociation.authentication(supports: { $0 == .none }) == .open, "open network needs no password")
-        expect(CoreWLANAssociation.authentication(supports: { $0 == .owe }) == .open, "enhanced open needs no password")
+        expect(CoreWLANAssociation.authentication(supports: { $0 == .OWE }) == .open, "enhanced open needs no password")
     }
     test("sleep and timeout cannot overlap a still-running public association") {
         let entered = DispatchSemaphore(value: 0)
@@ -255,9 +366,10 @@ func runWifiHandoverTests() {
             f.startJoin(); f.joined(); f.settle()
             f.context.currentSSID = nil
             f.context.wifiConnected = false
+        f.context.wifiDisconnected = true
             if completionBeforeTick { f.service.verified?(true) } else { f.handover.tick() }
             expect(f.offs == 0 && f.service.joins.last == "Test hotspot", "restore on both event orders")
-            f.context.currentSSID = "Test hotspot"; f.context.wifiConnected = true; f.service.joined?(true)
+            f.context.currentSSID = "Test hotspot"; f.context.wifiConnected = true; f.context.wifiDisconnected = false; f.service.joined?(true)
             f.date += 60; f.handover.tick(); f.service.scanned?(["Home"])
             expect(f.service.joins == ["Home", "Test hotspot"], "lost target also backs off")
         }
@@ -342,16 +454,18 @@ func runWifiHandoverTests() {
     test("losing the candidate during verification cannot shut off the hotspot") {
         let f = HandoverFixture()
         f.startJoin(); f.joined(); f.settle()
-        f.context.wifiConnected = false; f.service.verified?(true)
+        f.context.wifiConnected = false
+        f.context.wifiDisconnected = true; f.service.verified?(true)
         expect(f.offs == 0, "connected path must still be present")
     }
     test("enterprise Wi-Fi can finish authentication and DHCP after twenty seconds") {
         let f = HandoverFixture()
         f.startJoin(); f.service.joined?(true)
         f.context.currentSSID = "Home"; f.context.wifiConnected = false
+        f.context.wifiDisconnected = true
         f.date += 25; f.handover.tick()
         expect(f.handover.busy && f.service.joins == ["Home"], "do not interrupt enterprise authentication")
-        f.date += 40; f.context.wifiConnected = true; f.handover.tick(); f.settle()
+        f.date += 40; f.context.wifiConnected = true; f.context.wifiDisconnected = false; f.handover.tick(); f.settle()
         expect(f.service.probes == 1, "verify after the enterprise connection becomes usable")
         f.service.verified?(true)
         expect(f.offs == 1, "late successful connection permits Off")
@@ -365,8 +479,9 @@ func runWifiHandoverTests() {
     test("a transient association cannot satisfy the stability interval") {
         let f = HandoverFixture()
         f.startJoin(); f.joined()
-        f.date += 2; f.context.wifiConnected = false; f.handover.tick()
-        f.date += 2; f.context.wifiConnected = true; f.handover.tick()
+        f.date += 2; f.context.wifiConnected = false
+        f.context.wifiDisconnected = true; f.handover.tick()
+        f.date += 2; f.context.wifiConnected = true; f.context.wifiDisconnected = false; f.handover.tick()
         f.date += 2; f.handover.tick()
         expect(f.service.probes == 0, "three continuous seconds required")
         f.date += 1; f.handover.tick()
