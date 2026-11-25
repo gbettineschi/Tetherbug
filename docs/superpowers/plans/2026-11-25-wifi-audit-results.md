@@ -35,6 +35,22 @@ The earlier `NSPOSIXErrorDomain` code 16 was **not reproduced**. Its old catch b
 
 ## Verification and remaining boundary
 
+### Authorized home-network trial, 16:46–16:47 CET
+
+The user identified the currently connected saved WPA2-personal home network and authorized a home → Samsung hotspot → home trial. The test temporarily limited preferred networks to that home network and used the installed application's timed hotspot-preference policy. It did not edit macOS network profiles, request Keychain permission, run privileged commands or expose passwords.
+
+- Bluetooth hotspot On was confirmed in about one second. The first discovery did not initiate a join; the next minute's discovery found the saved hotspot and advanced to credential lookup.
+- At 16:47:20.894, the application failed at **personal-credentials**, `NSOSStatusErrorDomain` code **4097**. There was no personal-association start: neither hotspot authentication nor a physical switch was attempted.
+- At the same instant, the same XPC connection logged activation for `com.apple.wifi.WiFiAgent`, followed by `XPC_ERROR_CONNECTION_INTERRUPTED`. The Security error-string utility does not identify 4097 as a known Security OSStatus. This establishes the failing API boundary and a matching transport failure; it does not establish a wrong password or prove why the service connection was interrupted.
+- Recovery changed the app policy back to the home network. The app verified the already-connected home Wi-Fi and sent `disable (preferred Wi-Fi verified)`; the phone confirmed hotspot Off. The original gateway and a Wi-Fi-bound HTTP 200 were confirmed.
+- Original preferred-network list, disabled return policy, absent hotspot-preference timer and original automatic-mode pause were restored. The trial's scan-log stream was stopped.
+
+**Result: failed before the first association.** This trial therefore does not establish real hotspot → home handover or saved personal-network authentication. No release or merge follows from it.
+
+The Android credentials characteristic already supplies the paired hotspot password to `Agent.password` in memory, including a refresh when the AP turns on. That is an existing app-specific credential source the phone-join path could use instead of the failing saved-Keychain lookup. It does not solve credential access for other home networks and has not yet been wired into this association backend.
+
+Local evidence remains in `/tmp/tetherbug-home-handover-2026-11-25/`: `states.jsonl`, `result.json`, `wifi-live.log`, and `credential-xpc-events.log`. The home SSID is intentionally omitted from this public report.
+
 - Native suite: 140 tests, 0 failures, including red/green late-completion and courtesy regressions.
 - Universal candidate and protected signing passed in [trial run 45594433068](https://github.com/gbettineschi/Tetherbug/actions/runs/45594433068).
 - Retained signer, pairing/Bluetooth, native login enabled, no legacy login job or pending approval verified after installation.
