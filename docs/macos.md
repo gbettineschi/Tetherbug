@@ -55,25 +55,30 @@ running. Open Tetherbug once from Applications so macOS asks for Bluetooth acces
 
 Use this fork’s release downloads to retain the patches. See [personal releases](personal-releases.md) for signing and update details. Do not use the original author’s Homebrew cask: it installs upstream builds.
 
-### Return from the hotspot to preferred Wi-Fi (Mac only)
+### Turn off near preferred Wi-Fi (Mac only)
 
-In Tetherbug Settings, enable **Return to preferred Wi-Fi**, allow Wi-Fi network access, and add
-your home, university or other saved networks. You can choose **Add Saved Network…**, **Use Current
-Network**, or type the exact Wi-Fi name. Connect to a new network normally in macOS once before
-adding it here; Tetherbug reads credentials only for the selected saved network through public CoreWLAN Keychain helpers. It never logs or stores them. If Keychain access is denied or credentials are missing, the background join fails without requesting a password.
+Automatic Mode controls both automatic actions: request hotspot On when Wi-Fi is physically
+disconnected, and request Off when a preferred saved network is visible. In Settings, allow
+Wi-Fi network access and add your home, university or other saved networks. There is no separate
+return-to-preferred toggle. Enable Auto-join for those networks in macOS.
 
-While the Mac is fully awake, Automatic Mode is active and the phone hotspot is on, Tetherbug
-checks for listed networks at most once per minute. It tries them in list order when using the
-phone’s hotspot or when Wi-Fi is disconnected, leaving an unrelated Wi-Fi connection alone, including one without internet. After a network change not initiated by Tetherbug, application-initiated switches wait five minutes; another such change restarts that wait.
-After joining, it waits three seconds for a stable connection and checks Apple’s HTTPS connectivity
-endpoint over Wi-Fi. Only then does it turn off the hotspot. This also works if macOS joins a listed
-network itself. Captive portals and failed internet checks keep the hotspot on; an unsuccessful
-handover attempts to return to the hotspot and backs off that candidate for five minutes.
+Tetherbug performs read-only discovery at most once a minute while the hotspot is on or the Mac
+is disconnected. It matches saved SSID bytes and security, excludes the phone hotspot, and leaves
+association and authentication entirely to macOS. It never retrieves saved Wi-Fi passwords,
+initiates a connection, changes profiles or checks the preferred network's internet access.
+A visible network may still have a captive portal or broken internet; macOS decides whether to join.
 
-macOS requires Location permission for Wi-Fi names. Tetherbug requests permission only from Settings
-and never requests location updates. Automatic-mode pauses apply to handover too; sleep and DarkWake
-cancel pending work. This is entirely Mac-side: the Android app needs no update. Network switching
-can briefly interrupt transfers, so pause Automatic Mode while you need to stay on the hotspot.
+Fresh preferred presence also suppresses automatic On, preventing a repeated On/Off cycle if
+macOS cannot connect. Leaving its range allows ordinary activation after a fresh check. A failed
+or timed-out check never requests Off and does not strand the Mac waiting indefinitely for On.
+A native/manual network change gives automatic Off a five-minute courtesy period; it does not
+bypass the presence check before On.
+
+Automatic Mode Off and its timed pauses suspend both automatic actions. “Prefer hotspot for…”
+suspends the preferred-network rule while keeping ordinary disconnected-only activation available.
+The manual Mobile Hotspot switch remains available. macOS requires Location permission for Wi-Fi
+names; Tetherbug requests it only from Settings and never requests location updates. Sleep and
+DarkWake invalidate queued work. This is entirely Mac-side; Android needs no update.
 
 ### From the releases page
 
@@ -163,10 +168,11 @@ The pause is saved across app restarts and shown beside Automatic mode. Turning 
 
 The native menu’s **Prefer hotspot for…** submenu offers 15/30 minutes, 1/2/3/6 hours and Today. Choosing a duration replaces the current deadline; **Stop preferring hotspot** cancels it. The deadline survives restart. Joining another Wi-Fi does not cancel it. Automatic Mode and its pauses remain the overall switch for automation.
 
-While this preference is active, Tetherbug does not try to return to the listed networks. A paired hotspot which is already on becomes the preferred connection. Healthy Wi-Fi alone does not cause it to turn the phone hotspot on. Only in this explicit preference, unusable Wi-Fi can trigger hotspot activation: after a 30-second settling grace, two Wi-Fi-bound failed checks at least 15 seconds apart are required. An unavailable check is not counted as internet failure. A successful check resets the failure count; subsequent checks are at most once a minute. A failed activation backs off five minutes.
+While this preference is active, nearby preferred Wi-Fi does not request hotspot Off or suppress
+ordinary disconnected-only On. Tetherbug does not force a switch to the phone network. Healthy or
+broken internet on an associated Wi-Fi does not request On; only confirmed physical disconnection,
+with Wi-Fi powered on, can do that. Use macOS's Wi-Fi menu to select the network you want.
 
-Both switch directions use the same five-minute courtesy delay after a non-owned network change, verification and failure backoff. A failed hotspot handover attempts to restore the original Wi-Fi; failed restoration retries after five minutes, never overlapping a still-running CoreWLAN association. macOS can independently auto-join networks; the courtesy delay governs Tetherbug’s own attempts.
-
-Outside hotspot preference, an associated Wi-Fi never triggers hotspot activation merely because DHCP or internet fails. Only a confirmed physical disconnection, with Wi-Fi powered on, can trigger the existing automatic activation delay. Sleep/DarkWake suspends all app radio work and invalidates probe completions; public synchronous operations already submitted to macOS cannot be forcibly cancelled and retain ownership until they return.
-
-Enterprise networks use the public CoreWLAN enterprise association method with credentials left to macOS. Tetherbug does not pre-read their username, password or identity and offers no Keychain-access step. This native path still needs live verification with the saved enterprise profile: an API return alone does not establish successful authentication or internet access. Existing saved profiles and trust settings are not edited. macOS may show its own authentication or certificate-trust dialog; Tetherbug does not approve it or dismiss it on timeout.
+Sleep and DarkWake suspend app radio work and invalidate pending discovery results. A synchronous
+scan already submitted to macOS retains ownership until it returns; no second scan is queued behind
+it. This flow uses no Keychain access, enterprise-authentication request or internet probe.
