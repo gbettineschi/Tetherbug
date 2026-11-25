@@ -76,6 +76,7 @@ enum WifiScanDiagnostic {
         var refusal: String?
         var steps: [Step] = []
         var sameSSIDBeforeAndAfter: Bool?
+        var locationAuthorization: Int32?
         var succeeded: Bool {
             refusal == nil && steps.count == 2 && steps.allSatisfy { $0.failure == nil && $0.targetSeen }
         }
@@ -119,11 +120,24 @@ enum WifiScanDiagnostic {
         }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
-        let location = CLLocationManager()
         guard !Settings.returnToPreferredWifi, !WifiPreferenceControl().prefersHotspot() else {
             return Report(refusal: "automatic-switching-enabled")
         }
-        guard WifiAccess.authorized(location.authorizationStatus) else { return Report(refusal: "location-not-authorized") }
+        // The normal app has a running event loop. This short-lived command must allow
+        // Core Location's initial authorization callback before interpreting its state.
+        let observer = AuthorizationObserver()
+        let location = CLLocationManager()
+        location.delegate = observer
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while observer.status == nil, ProcessInfo.processInfo.systemUptime < deadline,
+              PowerActivity.isFullWake(SystemPowerMonitor.capabilities()) {
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        guard PowerActivity.isFullWake(SystemPowerMonitor.capabilities()) else { return Report(refusal: "not-permitted") }
+        guard let authorization = observer.status else { return Report(refusal: "location-status-unavailable") }
+        guard WifiAccess.authorized(authorization) else {
+            return Report(refusal: "location-not-authorized", locationAuthorization: authorization.rawValue)
+        }
         guard let interface = CWWiFiClient.shared().interface(), interface.powerOn() else {
             return Report(refusal: "interface-unavailable")
         }
@@ -144,5 +158,12 @@ enum WifiScanDiagnostic {
             report.sameSSIDBeforeAndAfter = previous == current
         }
         return report
+    }
+
+    private final class AuthorizationObserver: NSObject, CLLocationManagerDelegate {
+        var status: CLAuthorizationStatus?
+        func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+            status = manager.authorizationStatus
+        }
     }
 }
