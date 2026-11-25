@@ -353,6 +353,7 @@ test("automatic shutdown cooldowns never shorten an explicit suspension") {
 runMenuBarTests()
 runBluetoothRecoveryTests()
 runPowerActivityTests()
+runPreferredWifiPresenceTests()
 runWifiHandoverTests()
 runWifiDiagnosticsTests()
 runWifiPreferenceTests()
