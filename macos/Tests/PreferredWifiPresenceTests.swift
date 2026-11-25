@@ -5,7 +5,7 @@ private final class PresenceScannerFake: WifiPresenceScanner {
     var calls = 0
     var cancellations = 0
     var completion: ((Result<Set<Data>, Error>) -> Void)?
-    func scan(_ completion: @escaping (Result<Set<Data>, Error>) -> Void) { calls += 1; self.completion = completion }
+    func scan(_ candidates: Set<Data>, completion: @escaping (Result<Set<Data>, Error>) -> Void) { calls += 1; self.completion = completion }
     func cancel() { cancellations += 1 }
     func found(_ names: [String]) { completion?(.success(Set(names.map { Data($0.utf8) }))) }
 }
@@ -32,24 +32,23 @@ func runPreferredWifiPresenceTests() {
         let f = PresenceFixture(); f.policy.tick(); f.scanner.found(["Other"])
         expect(f.offs == 0, "an unrelated network is not a reason to turn Off")
     }
-    test("automatic Off follows the master switch, pause, preference timer and courtesy") {
-        for gate in 0..<8 {
+    test("automatic Off follows the master switch, pause and preference timer") {
+        for gate in 0..<7 {
             let f = PresenceFixture()
             switch gate {
             case 0: f.context.automaticActive = false
             case 1: f.context.preferHotspot = true
-            case 2: f.context.courtesyElapsed = false
-            case 3: f.context.allowed = false
-            case 4: f.context.phoneReady = false
-            case 5: f.context.wifiPoweredOn = false
-            case 6: f.context.locationAllowed = false
+            case 2: f.context.allowed = false
+            case 3: f.context.phoneReady = false
+            case 4: f.context.wifiPoweredOn = false
+            case 5: f.context.locationAllowed = false
             default: f.context.preferred = []
             }
             f.policy.tick()
             expect(f.scanner.calls == 0 && f.offs == 0, "ineligible policies never scan or send Off")
         }
     }
-    test("a new gate or list change invalidates a scan even before the next tick") {
+    test("an Off gate or list change cannot authorize a late command") {
         for change in 0..<5 {
             let f = PresenceFixture(); f.policy.tick()
             switch change {
@@ -69,8 +68,8 @@ func runPreferredWifiPresenceTests() {
         f.context.allowed = true; f.policy.tick()
         old?(.success([Data("Home".utf8)]))
         expect(f.offs == 0, "awake generations cannot inherit stale results")
-        f.scanner.found(["Home"])
-        expect(f.offs == 1, "fresh discovery after wake works")
+        f.date += 60; f.policy.tick(); f.scanner.found(["Home"])
+        expect(f.offs == 1, "fresh discovery after wake works within the radio throttle")
     }
     test("nearby preferred Wi-Fi prevents an automatic On Off loop") {
         let f = PresenceFixture(); f.context.wifiDisconnected = true
@@ -128,6 +127,73 @@ func runPreferredWifiPresenceTests() {
         let f = PresenceFixture(); f.policy.tick(); f.context.canTurnOff = false
         f.scanner.found(["Home"])
         expect(f.offs == 0, "phone command ownership wins")
+    }
+    test("a disconnect courtesy prevents Off without bypassing preferred presence before On") {
+        let f = PresenceFixture(); f.policy.tick(); f.scanner.found(["Home"])
+        f.context.hotspotOn = false; f.context.wifiDisconnected = true; f.context.courtesyElapsed = false
+        f.policy.tick()
+        expect(f.policy.blocksAutomaticEnable, "a native disconnect cannot discard known preferred presence")
+        f.date += 60; f.policy.tick(); f.scanner.found(["Home"])
+        expect(f.policy.blocksAutomaticEnable && f.offs == 1, "courtesy gates only another Off")
+    }
+    test("unknown phone identity cannot mistake the hotspot for a preferred network") {
+        for name: String? in [nil, ""] {
+            let f = PresenceFixture(); f.context.hotspotSSID = name; f.context.preferred = ["Actual phone"]
+            f.context.wifiDisconnected = true
+            f.policy.tick(); f.scanner.found(["Actual phone"])
+            expect(f.offs == 0 && !f.policy.blocksAutomaticEnable, "unknown identity withholds Off and allows ordinary On")
+        }
+    }
+    test("list or mode invalidation cannot restart physical scanning inside a minute") {
+        let f = PresenceFixture(); f.policy.tick(); f.scanner.found([])
+        f.date += 1; f.context.preferred = ["Other"]; f.policy.tick()
+        f.context.automaticActive = false; f.policy.tick(); f.context.automaticActive = true; f.policy.tick()
+        expect(f.scanner.calls == 1, "preserve the submission throttle across invalidation")
+        f.date += 59; f.policy.tick()
+        expect(f.scanner.calls == 2, "one minute permits another physical query")
+    }
+    test("offline reconnect waits through the first BLE read, ACK and preferred discovery") {
+        let f = PresenceFixture(); f.context.hotspotOn = false; f.context.wifiDisconnected = true
+        let (control, _) = environment()
+        var metadata = PhoneStatusReceiver(), subscription = PhoneStatusSubscription()
+        var s = phoneState(.off); s.wifiOffline = true
+        var ons = 0
+        func automate() {
+            let ready = metadata.ready && subscription.ready
+            f.context.phoneReady = ready
+            f.policy.tick()
+            if control.shouldAutomaticallyEnable(s, phoneReady: ready, now: f.date), !f.policy.blocksAutomaticEnable { ons += 1 }
+        }
+        _ = subscription.begin(now: now)
+        _ = subscription.changed(notifying: false, failed: false)
+        _ = metadata.receive(Data([3, 0, 80, 4, 1, 0, 0] + Array("Phone".utf8)), notification: false)
+        _ = subscription.readCompleted(); automate()
+        expect(ons == 0 && f.scanner.calls == 0, "the first full read alone cannot issue On")
+        _ = subscription.changed(notifying: true, failed: false); automate()
+        expect(ons == 0 && f.scanner.calls == 1, "ACK starts discovery before activation")
+        f.scanner.found(["Home"]); automate()
+        expect(ons == 0, "preferred presence keeps activation blocked")
+        f.date += 60; f.policy.tick(); f.scanner.found([]); automate()
+        expect(ons == 1, "only a current absence allows ordinary activation")
+    }
+    test("the completion snapshot observes a native network change before the next path tick") {
+        let (_, defaults) = environment()
+        let courtesy = WifiPreferenceControl(defaults: defaults)
+        var network: String? = "Phone"
+        var c = PreferredWifiPresence.Context(allowed: true, automaticActive: true, phoneReady: true,
+            canTurnOff: true, hotspotOn: true, wifiDisconnected: false, wifiPoweredOn: true,
+            locationAllowed: true, preferred: ["Home"], hotspotSSID: "Phone")
+        let scanner = PresenceScannerFake()
+        var offs = 0
+        let policy = PreferredWifiPresence(scanner: scanner, context: {
+            courtesy.observeNetwork(network, disconnected: c.wifiDisconnected, now: now)
+            var snapshot = c; snapshot.courtesyElapsed = courtesy.canTurnOff(now: now)
+            return snapshot
+        }, now: { now }, turnOff: { offs += 1 })
+        policy.tick(); network = "Home"; scanner.found(["Home"])
+        expect(offs == 0 && courtesy.offNotBefore == now + 300, "fresh native choice suppresses Off before any timer update")
+        c.hotspotOn = false; c.wifiDisconnected = true; network = nil
+        expect(policy.blocksAutomaticEnable, "the fresh observation still prevents the On Off loop")
     }
     test("a completion after its budget cannot send Off before the next timer tick") {
         let f = PresenceFixture(); f.context.wifiDisconnected = true

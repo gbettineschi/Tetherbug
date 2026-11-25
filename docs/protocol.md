@@ -16,8 +16,10 @@ asks for the state the hotspot is already in is a no-op. The Mac agent reads
 the passphrase on connect and whenever the hotspot comes on, and hands it out
 only on an explicit request, never in its status stream.
 
-With the frequency known, the Mac scans just that channel when the hotspot
-comes on, so it lands in macOS's scan cache (and the Wi-Fi menu) within about a
-second instead of waiting on a full scan.
+The Mac leaves Wi-Fi association and authentication to macOS. In Automatic Mode,
+it performs bounded read-only discovery for configured preferred saved networks
+and can ask the phone to turn its hotspot off when one is visible. It does not
+seed the scan cache with a separate directed hotspot scan or use the passphrase
+to connect. The credentials characteristic remains available for explicit Show/Copy.
 
 See the [README](../README.md#how-macos-recognises-a-personal-hotspot) for how the hotspot is made to look like an iPhone's.

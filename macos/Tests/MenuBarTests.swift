@@ -148,7 +148,7 @@ func runMenuBarTests() {
         let auto = menu.menu.items.first { $0.action == #selector(MenuBarController.changeAutomatic(_:)) }!
         expect(auto.state == .off, "disabled automatic mode is unchecked")
         menu.menu.performActionForItem(at: menu.menu.index(of: auto))
-        expect(control.automatic && control.shouldAutomaticallyEnable(state, now: now), "menu click resumes even from Settings Off")
+        expect(control.automatic && control.shouldAutomaticallyEnable(state, phoneReady: true, now: now), "menu click resumes even from Settings Off")
     }
 
     test("Finder reopening the accessory agent routes to the regular settings window") {

@@ -9,7 +9,6 @@ import SwiftUI
 final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
     private let defaults: UserDefaults
     private let location = CLLocationManager()
-    var enabled: Bool { didSet { defaults.set(enabled, forKey: "returnToPreferredWifi") } }
     var networks: [String] { didSet { defaults.set(networks, forKey: "preferredWifiNetworks") } }
     private(set) var authorization = CLAuthorizationStatus.notDetermined
     private(set) var currentNetwork: String?
@@ -21,7 +20,6 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
 
     init(defaults: UserDefaults = Settings.defaults) {
         self.defaults = defaults
-        enabled = defaults.bool(forKey: "returnToPreferredWifi")
         networks = defaults.stringArray(forKey: "preferredWifiNetworks") ?? []
         super.init()
         location.delegate = self
@@ -63,12 +61,11 @@ struct PreferredWifiSection: View {
 
     var body: some View {
         Section("Preferred Wi-Fi") {
-            Toggle("Return to preferred Wi-Fi", isOn: $model.enabled)
-            if model.enabled || prefersHotspot {
-                Text(prefersHotspot ? "Hotspot preference is active. Wi-Fi network access is required for automatic switching. Follows Automatic Mode and its pauses." : "Connect to a listed network, then turn off the phone’s hotspot once internet access works. Follows Automatic Mode and its pauses.")
+            Group {
+                Text(prefersHotspot ? "Hotspot preference is active. Nearby Wi-Fi will not turn the hotspot off until it ends." : "Automatic Mode turns the hotspot off when a listed Wi-Fi is nearby. macOS handles connecting to it.")
                     .font(.callout).foregroundStyle(.secondary)
                 if !model.authorized {
-                    Text("macOS requires Location access to identify Wi-Fi networks. Tetherbug does not request location updates.")
+                    Text("macOS requires Location access to identify nearby Wi-Fi. Tetherbug does not track your location.")
                         .font(.callout).foregroundStyle(.secondary)
                     if model.permissionDenied {
                         Link("Allow Location access in System Settings…", destination:
@@ -111,11 +108,10 @@ struct PreferredWifiSection: View {
                 }
                 if let error = model.error { Text(error).foregroundStyle(.red).font(.callout) }
                 if let message { Text(message).foregroundStyle(.secondary).font(.callout) }
-                Text("Use networks already saved in macOS. Listed networks are tried in order, at most once per minute while using the hotspot. Failed networks wait five minutes before retrying.")
+                Text("Use networks saved in macOS with Auto-join enabled. Presence is checked at most once a minute and does not verify internet access. Turning off Automatic Mode also disables this rule.")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
-        .onChange(of: model.enabled) { model.refresh() }
         .onChange(of: scenePhase) { if scenePhase == .active { model.refresh() } }
     }
 

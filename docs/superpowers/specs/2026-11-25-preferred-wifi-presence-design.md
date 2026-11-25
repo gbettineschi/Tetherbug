@@ -10,11 +10,12 @@ Keep the preferred list and existing “Prefer hotspot for…” timer. That tim
 
 ## Rules
 
-- Scan at most once per minute, only in FullWake with existing Location permission, valid saved preferred networks and an operational phone. Never request permission from the worker.
+- Scan at most once per minute across list/mode changes, only in FullWake with existing Location permission, valid saved preferred networks and an operational phone with a known hotspot identity. Never request permission from the worker. Unknown hotspot identity withholds presence Off while allowing ordinary On.
 - While the phone hotspot is On, a fresh successful scan showing a preferred saved SSID/security permits Off, subject to Automatic Mode, its pauses, the hotspot-preference timer and courtesy delay. Exclude the phone hotspot itself.
 - While the Mac is disconnected and the hotspot is Off, check presence before automatic On. A visible preferred network suppresses On; refresh once a minute so leaving its range can re-enable ordinary activation. This prevents an On/Off loop.
 - Unknown presence waits for a bounded first scan. A failed/timed-out scan never sends Off and allows ordinary disconnected-only On; errors are not evidence that a preferred network is absent. Observation freshness is 90 seconds, scan budget 15 seconds, retry spacing 60 seconds. Do not queue another scan while the OS call is still running.
 - Recheck eligibility and configuration when asynchronous results arrive. Sleep, Automatic Mode changes, timer changes and list changes invalidate pending work. A blocking scan cannot be forcibly stopped, but no stale callback may control the phone.
+- Network-change courtesy restricts Off only. It must not bypass the pre-On presence check. Sample the physical link and native SSID in the decision snapshot, including asynchronous completion, before applying that courtesy. Automatic On requires the complete Bluetooth metadata/subscription handshake.
 - Preserve ordinary manual hotspot controls, the five-minute nearby phone-shutdown pause, Bluetooth recovery, stable signing, one installed app, login registration and all Android behavior.
 
 ## Delivery

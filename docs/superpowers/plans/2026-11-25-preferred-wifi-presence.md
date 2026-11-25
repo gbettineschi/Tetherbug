@@ -27,9 +27,9 @@
 
 ## Task 1: Presence policy
 
-- [ ] Add failing policy tests for visible/absent networks, Automatic Mode/override gates, stale completions, presence suppression, freshness, timeout, retry bounds and non-overlapping scans.
-- [ ] Implement `PreferredWifiPresence` and `WifiPresenceScanner` with context-driven eligibility and a read-only result interface.
-- [ ] Run the complete native suite and commit the policy.
+- [x] Add failing policy tests for visible/absent networks, Automatic Mode/override gates, stale completions, presence suppression, freshness, timeout, retry bounds and non-overlapping scans.
+- [x] Implement `PreferredWifiPresence` and `WifiPresenceScanner` with context-driven eligibility and a read-only result interface.
+- [x] Run the complete native suite and commit the policy.
 
 ## Task 2: Native scanner and app integration
 
@@ -45,3 +45,6 @@
 - Ruling: no new design approval round — the user explicitly selected presence-based Off and previously requested autonomous implementation for this project.
 - Ruling: suppress automatic On while preferred presence is fresh — needed to prevent oscillation after Off; scanning only while hotspot On or Mac disconnected bounds radio work.
 - Ruling: the preferred list itself configures the rule; remove the old independent enable toggle — the user made this part of Automatic Mode.
+- Ruling: remove the old separate directed hotspot-cache seed — native macOS discovery owns that behavior; no extra scan path should evade the common minute throttle. Updated the live protocol guide.
+- Review corrections: gate automatic On on the complete BLE handshake; apply courtesy only to Off; refresh the native link/SSID in completion decisions; stand down presence Off for unknown phone identity; preserve submission throttling across invalidation; filter saved preferred identities before radio work.
+- Verification: policy RED/GREEN passed 155 tests before obsolete association tests were retired. Review regressions produced six expected failures, then the final native suite passed 120 tests, 0 failures (`/tmp/tetherbug-presence-final-suite.log`). Unrelated Bluetooth metadata, sleep, menu and login coverage remains; deleted tests concern removed association, Keychain, HTTP probe and restoration features.

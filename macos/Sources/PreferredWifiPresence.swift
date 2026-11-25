@@ -1,9 +1,19 @@
 import Foundation
 
+enum WifiNetworkNames {
+    static func error(for name: String, existing: [String], hotspot: String?) -> String? {
+        if name.isEmpty || name.utf8.count > 32 { return "Enter a Wi-Fi name of 1–32 bytes." }
+        if name == hotspot { return "Choose a network other than your phone’s hotspot." }
+        if existing.contains(name) { return "This network is already in the list." }
+        return nil
+    }
+}
+
+
 /// Discovery only. Implementations retain `pending` until the real OS call returns.
 protocol WifiPresenceScanner: AnyObject {
     var pending: Bool { get }
-    func scan(_ completion: @escaping (Result<Set<Data>, Error>) -> Void)
+    func scan(_ candidates: Set<Data>, completion: @escaping (Result<Set<Data>, Error>) -> Void)
     func cancel()
 }
 
@@ -28,8 +38,9 @@ final class PreferredWifiPresence {
                 .map { Data($0.utf8) })
         }
         var eligible: Bool {
-            allowed && automaticActive && phoneReady && wifiPoweredOn && locationAllowed &&
-                !preferHotspot && courtesyElapsed && !identities.isEmpty
+            guard let hotspotSSID, !hotspotSSID.isEmpty, hotspotSSID.utf8.count <= 32 else { return false }
+            return allowed && automaticActive && phoneReady && wifiPoweredOn && locationAllowed &&
+                !preferHotspot && !identities.isEmpty
         }
     }
 
@@ -59,9 +70,14 @@ final class PreferredWifiPresence {
     var blocksAutomaticEnable: Bool {
         let c = context()
         guard c.eligible, c.wifiDisconnected else { return false }
-        guard let observation, now().timeIntervalSince(observation.date) >= 0,
-              now().timeIntervalSince(observation.date) < 90 else { return true }
-        return observation.value == .visible
+        guard let value = freshObservation(at: now()) else { return true }
+        return value == .visible
+    }
+
+    private func freshObservation(at date: Date) -> Observation? {
+        guard let observation, date.timeIntervalSince(observation.date) >= 0,
+              date.timeIntervalSince(observation.date) < 90 else { return nil }
+        return observation.value
     }
 
     func cancel() {
@@ -71,7 +87,6 @@ final class PreferredWifiPresence {
         deadline = nil
         submitted = false
         observation = nil
-        nextScan = .distantPast
         report(nil)
     }
 
@@ -96,21 +111,20 @@ final class PreferredWifiPresence {
             self.deadline = nil
             submitted = false
             observation = (.unavailable, date)
-            nextScan = date.addingTimeInterval(60)
             report("Preferred Wi-Fi couldn’t be checked.")
             return
         }
         if deadline == nil {
-            guard date >= nextScan else { return }
-            epoch &+= 1
+            guard date >= nextScan || (c.wifiDisconnected && freshObservation(at: date) == nil) else { return }
             deadline = date.addingTimeInterval(15)
-            nextScan = date.addingTimeInterval(60)
         }
         // The budget includes waiting for a scan left running across cancel/sleep.
-        guard !submitted, !scanner.pending else { return }
+        guard !submitted, !scanner.pending, date >= nextScan else { return }
         submitted = true
+        epoch &+= 1
+        nextScan = date.addingTimeInterval(60)
         let id = epoch
-        scanner.scan { [weak self] result in
+        scanner.scan(c.identities) { [weak self] result in
             guard let self, id == self.epoch, self.deadline != nil, self.submitted else { return }
             let fresh = self.context()
             guard fresh.eligible, fresh.identities == self.configuration else { self.cancel(); return }
@@ -122,7 +136,7 @@ final class PreferredWifiPresence {
                 let found = !visible.isDisjoint(with: fresh.identities)
                 self.observation = (found ? .visible : .absent, self.now())
                 self.report(found ? "Preferred Wi-Fi is nearby." : nil)
-                if found, fresh.hotspotOn, fresh.canTurnOff { self.turnOff() }
+                if found, fresh.hotspotOn, fresh.canTurnOff, fresh.courtesyElapsed { self.turnOff() }
             case .failure:
                 // An unavailable scan is not proof of absence. It must neither send Off
                 // nor leave a disconnected Mac waiting indefinitely for internet access.

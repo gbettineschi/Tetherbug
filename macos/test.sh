@@ -30,7 +30,7 @@ swiftc -target "$(uname -m)-apple-macos14.0" "$here/Sources/Protocol.swift" "$he
   "$here/Sources/Agent.swift" "$here/Sources/BluetoothRecovery.swift" "$here/Sources/PowerActivity.swift" \
   "$here/Sources/SystemPowerMonitor.swift" "$here/Sources/BluetoothCallbacks.swift" \
   "$here/Tests/PowerActivityTests.swift" "$here/Tests/MenuBarTests.swift" "$here/Tests/BluetoothRecoveryTests.swift" \
-  "$here/Sources/PreferredWifiPresence.swift" "$here/Sources/WifiHandover.swift" "$here/Sources/MacWifi.swift" "$here/Sources/WifiPreferencesView.swift" \
-  "$here/Sources/WifiDiagnostics.swift" "$here/Sources/NativeWifiAssociation.swift" "$here/Sources/WifiPreferenceControl.swift" \
-  "$here/Tests/PreferredWifiPresenceTests.swift" "$here/Tests/WifiDiagnosticsTests.swift" "$here/Tests/WifiHandoverTests.swift" "$here/Tests/WifiPreferenceTests.swift" "$here/Tests/main.swift" -o "$work/tests"
+  "$here/Sources/PreferredWifiPresence.swift" "$here/Sources/MacWifi.swift" "$here/Sources/WifiPreferencesView.swift" \
+  "$here/Sources/WifiPreferenceControl.swift" \
+  "$here/Tests/PreferredWifiPresenceTests.swift" "$here/Tests/WifiAccessTests.swift" "$here/Tests/WifiPreferenceTests.swift" "$here/Tests/main.swift" -o "$work/tests"
 "$work/tests"
