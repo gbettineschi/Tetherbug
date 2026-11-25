@@ -127,6 +127,7 @@ enum WifiScanDiagnostic {
         // Core Location's initial authorization callback before interpreting its state.
         let observer = AuthorizationObserver()
         let location = CLLocationManager()
+        defer { withExtendedLifetime(location) {} }
         location.delegate = observer
         let deadline = ProcessInfo.processInfo.systemUptime + 2
         while observer.status == nil, ProcessInfo.processInfo.systemUptime < deadline,
