@@ -354,6 +354,7 @@ runMenuBarTests()
 runBluetoothRecoveryTests()
 runPowerActivityTests()
 runWifiHandoverTests()
+runWifiDiagnosticsTests()
 runWifiPreferenceTests()
 for suite in suites { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
 print("\(count) tests, \(failures) failures")

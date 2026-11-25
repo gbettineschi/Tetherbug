@@ -1,7 +1,6 @@
 import CoreWLAN
 import Foundation
 import Security
-import OSLog
 
 /// A timeout/cancellation does not stop a blocking public CoreWLAN association.
 struct WifiAssociationState {
@@ -22,7 +21,7 @@ struct WifiAssociationState {
 
 /// Owns one blocking public association until it returns. Cancellation suppresses its result.
 final class NativeWifiAssociation {
-    typealias Perform = (String, String, @escaping () -> Bool) throws -> Void
+    typealias Perform = (String, String, WifiScanSnapshot<CWNetwork>?, @escaping () -> Bool) throws -> Void
     private final class Operation { var state = WifiAssociationState() }
     private let queue: DispatchQueue
     private let perform: Perform
@@ -43,7 +42,7 @@ final class NativeWifiAssociation {
         lock.withLock { current === operation && operation.state.canDeliver }
     }
 
-    func join(_ ssid: String, device: String, allowed: @escaping () -> Bool,
+    func join(_ ssid: String, device: String, observation: WifiScanSnapshot<CWNetwork>? = nil, allowed: @escaping () -> Bool,
               completion: @escaping (Bool) -> Void) {
         guard allowed() else { completion(false); return }
         let operation = Operation()
@@ -59,13 +58,10 @@ final class NativeWifiAssociation {
             if self.owns(operation), allowed() {
                 self.lock.withLock { operation.state.submitted = true }
                 do {
-                    try self.perform(ssid, device, { self.owns(operation) && allowed() })
+                    try self.perform(ssid, device, observation, { self.owns(operation) && allowed() })
                     success = true
                 } catch {
-                    let error = error as NSError
-                    // Never log localizedDescription/userInfo: they can contain credentials.
-                    Logger(subsystem: "ie.xav.tetherbug", category: "wifi").error(
-                        "CoreWLAN association failed (\(error.domain, privacy: .public), code \(error.code))")
+                    WifiOperationFailure(error, stage: .preparation).log()
                 }
             }
             let result = success
@@ -120,7 +116,7 @@ enum CoreWLANAssociation {
         return .personal
     }
 
-    static func join(_ ssid: String, device: String, allowed: @escaping () -> Bool) throws {
+    static func join(_ ssid: String, device: String, observation: WifiScanSnapshot<CWNetwork>?, allowed: @escaping () -> Bool) throws {
         guard allowed() else { throw Failure.cancelled }
         guard let interface = CWWiFiClient.shared().interface(withName: device), interface.powerOn() else {
             throw Failure.unavailable
@@ -131,7 +127,14 @@ enum CoreWLANAssociation {
         guard !profiles.isEmpty else { throw Failure.notSaved }
         guard interface.configuration()?.requireAdministratorForAssociation != true else { throw Failure.unavailable }
         guard allowed() else { throw Failure.cancelled }
-        let networks = try interface.scanForNetworks(withSSID: data)
+        // The service scopes this observation to the awake generation. Recheck age after
+        // queueing, then reuse the actual scan objects rather than immediately rescanning.
+        let networks: [CWNetwork]
+        if let observed = observation?.freshResults(interface: device, now: ProcessInfo.processInfo.systemUptime) {
+            networks = observed
+        } else {
+            networks = try WifiOperationFailure.perform(.directedScan) { Array(try interface.scanForNetworks(withSSID: data)) }
+        }
         let matches = networks.compactMap { network -> (CWNetwork, CWNetworkProfile)? in
             guard let profile = profiles.first(where: {
                 Self.matches(savedSSID: data, security: $0.security, networkSSID: network.ssidData,
@@ -145,25 +148,27 @@ enum CoreWLANAssociation {
         guard allowed() else { throw Failure.cancelled }
         switch authentication(supports: { $0 == profile.security }) {
         case .open:
-            try interface.associate(to: network, password: nil)
+            try WifiOperationFailure.perform(.openAssociation) { try interface.associate(to: network, password: nil) }
         case .personal:
-            let password: NSString? = try withoutKeychainInteraction {
+            let password: NSString = try WifiOperationFailure.perform(.personalCredentials) { try withoutKeychainInteraction {
                 var value: NSString?
                 for domain: CWKeychainDomain in [.user, .system] {
                     if try credentialFound(CWKeychainFindWiFiPassword(domain, data, &value)) { break }
                 }
+                guard let value else { throw Failure.credentialsUnavailable }
                 return value
-            }
-            guard let password else { throw Failure.credentialsUnavailable }
+            } }
             guard allowed() else { throw Failure.cancelled }
-            try interface.associate(to: network, password: password as String)
+            try WifiOperationFailure.perform(.personalAssociation) { try interface.associate(to: network, password: password as String) }
         case .enterprise:
             guard allowed() else { throw Failure.cancelled }
             // Start native user-mode 802.1X without first extracting its saved credentials.
             // macOS owns authentication and trust. Nil is not a promise of saved-profile
             // reuse: completion still needs observed association and an internet check.
-            try interface.associate(toEnterpriseNetwork: network, identity: nil,
-                                    username: nil, password: nil)
+            try WifiOperationFailure.perform(.enterpriseAssociation) {
+                try interface.associate(toEnterpriseNetwork: network, identity: nil,
+                                        username: nil, password: nil)
+            }
         }
     }
 }

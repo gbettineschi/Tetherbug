@@ -29,7 +29,7 @@ enum WifiAccess {
 }
 
 /// Main-queue owner of cancellable native operations. Blocking scans share the agent's scan queue.
-/// Saved credentials are read only for the exact target through public CoreWLAN helpers.
+/// Personal credentials use scoped public helpers; enterprise authentication is left to macOS.
 final class MacWifiHandoverService: WifiHandoverService {
     private let activity: PowerActivity
     private let queue: DispatchQueue
@@ -40,6 +40,7 @@ final class MacWifiHandoverService: WifiHandoverService {
     private var connection: NWConnection?
     private var timeout: DispatchWorkItem?
     private lazy var location = CLLocationManager()
+    private var latestScan: WifiScanSnapshot<CWNetwork>?
 
     var locationAllowed: Bool { WifiAccess.authorized(location.authorizationStatus) }
     var associationPending: Bool { association.pending }
@@ -54,6 +55,7 @@ final class MacWifiHandoverService: WifiHandoverService {
     }
 
     func cancel() {
+        latestScan = nil
         lock.withLock { epoch &+= 1 }
         timeout?.cancel()
         timeout = nil
@@ -77,22 +79,34 @@ final class MacWifiHandoverService: WifiHandoverService {
         guard allows(token), locationAllowed, !association.pending else { completion([]); return }
         queue.async { [weak self] in
             guard let self, self.allows(token) else { return }
-            guard let interface = CWWiFiClient.shared().interface(), interface.powerOn() else {
+            guard let interface = CWWiFiClient.shared().interface(), let device = interface.interfaceName,
+                  interface.powerOn() else {
                 DispatchQueue.main.async { if self.allows(token) { completion([]) } }
                 return
             }
             let saved = WifiAccess.savedNetworks(interface)
             guard self.allows(token) else { return }
-            let networks = (try? interface.scanForNetworks(withName: nil)) ?? []
+            let networks: [CWNetwork]
+            do {
+                networks = try WifiOperationFailure.perform(.discoveryScan) { Array(try interface.scanForNetworks(withName: nil)) }
+            } catch {
+                WifiOperationFailure(error, stage: .discoveryScan).log()
+                DispatchQueue.main.async { if self.allows(token) { completion([]) } }
+                return
+            }
+            let snapshot = WifiScanSnapshot(networks: networks, interface: device,
+                                            generation: token.1, capturedAt: ProcessInfo.processInfo.systemUptime)
             let names = Set(networks.compactMap(\.ssid)).intersection(saved)
             DispatchQueue.main.async {
                 guard self.allows(token) else { return }
+                self.latestScan = snapshot
                 completion(names)
             }
         }
     }
 
     func join(_ ssid: String, completion: @escaping (Bool) -> Void) {
+        let observed = latestScan // begin() invalidates the service's old operation/cache.
         let token = begin()
         guard allows(token), locationAllowed, let interface = CWWiFiClient.shared().interface(),
               interface.powerOn(), WifiAccess.savedNetworks(interface).contains(ssid),
@@ -104,7 +118,11 @@ final class MacWifiHandoverService: WifiHandoverService {
         }
         timeout = expiry
         DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: expiry)
-        association.join(ssid, device: device, allowed: { [weak self] in self?.allows(token) == true }) { [weak self] success in
+        let scoped = observed.flatMap {
+            $0.results(interface: device, generation: token.1, now: ProcessInfo.processInfo.systemUptime) == nil ? nil : $0
+        }
+        association.join(ssid, device: device, observation: scoped,
+                         allowed: { [weak self] in self?.allows(token) == true }) { [weak self] success in
             guard let self, self.allows(token) else { return }
             self.timeout?.cancel()
             self.timeout = nil

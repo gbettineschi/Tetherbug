@@ -39,6 +39,49 @@ private final class HandoverFixture {
 }
 
 func runWifiHandoverTests() {
+    test("a timed-out join retains ownership when the original network is still visible") {
+        let f = HandoverFixture()
+        f.startJoin()
+        f.service.associationPending = true
+        f.service.joined?(false)
+        f.handover.tick()
+        expect(f.handover.busy, "keep the original restore intent until the OS request returns")
+        expect(f.handover.switchingTarget == "Home", "a late owned association must not look like an external choice")
+        f.context.currentSSID = "Home"
+        f.service.associationPending = false
+        f.handover.tick()
+        expect(f.service.joins == ["Home", "Test hotspot"], "restore the origin after the late system join")
+    }
+    test("a later external selection wins over a timed-out system association") {
+        let f = HandoverFixture()
+        f.startJoin(); f.service.associationPending = true; f.service.joined?(false)
+        f.context.currentSSID = "Other"; f.service.associationPending = false
+        f.handover.tick()
+        expect(f.service.joins == ["Home"] && !f.handover.busy, "do not undo the user's different network")
+    }
+    test("a timed-out restoration keeps its late destination marked as app-owned") {
+        let f = HandoverFixture()
+        f.startJoin(); f.joined("Home"); f.settle(); f.service.verified?(false)
+        f.service.associationPending = true; f.service.joined?(false)
+        expect(f.handover.switchingTarget == "Test hotspot", "do not classify a late restoration as a fresh external choice")
+        f.context.currentSSID = "Test hotspot"; f.service.associationPending = false
+        expect(f.handover.switchingTarget == "Test hotspot", "retain ownership until the next observed-link reconciliation")
+        f.handover.tick()
+        expect(!f.handover.busy, "recognize that the restoration eventually arrived")
+    }
+    test("restoration retries honor a newer external-choice courtesy delay") {
+        let f = HandoverFixture()
+        f.context.preferHotspot = true; f.context.currentSSID = "Home"
+        f.handover.tick(); f.service.scanned?(["Test hotspot"])
+        f.joined("Test hotspot"); f.settle(); f.service.verified?(false)
+        f.service.joined?(false)
+        f.date += 300; f.context.currentSSID = nil; f.context.wifiConnected = false
+        f.context.wifiDisconnected = true; f.context.switchingAllowed = false
+        f.handover.tick()
+        expect(f.service.joins.count == 2, "an expired retry cannot override a new courtesy period")
+        f.date += 300; f.context.switchingAllowed = true; f.handover.tick()
+        expect(f.service.joins == ["Test hotspot", "Home", "Home"], "retry only after both deadlines allow it")
+    }
     test("restoration waits until the original blocking association has really returned") {
         let f = HandoverFixture()
         f.startJoin()
@@ -160,7 +203,7 @@ func runWifiHandoverTests() {
         let entered = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
         let queue = DispatchQueue(label: "tetherbug.tests.association")
-        let association = NativeWifiAssociation(queue: queue, perform: { _, _, allowed in
+        let association = NativeWifiAssociation(queue: queue, perform: { _, _, _, allowed in
             expect(allowed(), "operation starts in the permitted generation")
             entered.signal()
             _ = release.wait(timeout: .now() + 2)
@@ -181,7 +224,7 @@ func runWifiHandoverTests() {
         let queue = DispatchQueue(label: "tetherbug.tests.queued-association")
         queue.suspend()
         var calls = 0
-        let association = NativeWifiAssociation(queue: queue, perform: { _, _, _ in calls += 1 })
+        let association = NativeWifiAssociation(queue: queue, perform: { _, _, _, _ in calls += 1 })
         var delivered = false
         association.join("Test", device: "test0", allowed: { true }) { _ in delivered = true }
         association.suspend()

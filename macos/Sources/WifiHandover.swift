@@ -72,6 +72,7 @@ final class WifiHandover {
     private var restorationSource: String?
     private var restorationInFlight = false
     private var restorationDeadline: Date?
+    private var pendingAssociationTarget: String?
     private var stableSince: Date?
     private var attemptedSSID: String?
     private var nextScan = Date.distantPast
@@ -85,8 +86,9 @@ final class WifiHandover {
     }
 
     var switchingTarget: String? {
+        if let pendingAssociationTarget { return pendingAssociationTarget }
         if case let .restoring(target, _) = phase {
-            return restorationInFlight || restorationDeadline != nil ? target : nil
+            return restorationInFlight || restorationDeadline != nil || service.associationPending ? target : nil
         }
         return attemptedSSID
     }
@@ -113,6 +115,7 @@ final class WifiHandover {
         restorationSource = nil
         restorationInFlight = false
         restorationDeadline = nil
+        pendingAssociationTarget = nil
         report(nil)
     }
 
@@ -159,6 +162,10 @@ final class WifiHandover {
         case let .restoring(target, retryAfter):
             if let current = c.currentSSID, current != target, current != restorationSource { cancel(); return }
             if restorationInFlight { return }
+            // A logical timeout can precede the actual switch. Keep both identities until
+            // the synchronous OS operation returns, even while still on the origin.
+            if service.associationPending { return }
+            pendingAssociationTarget = nil
             if c.currentSSID == target, c.wifiConnected {
                 phase = .idle
                 restoreSSID = nil
@@ -174,7 +181,7 @@ final class WifiHandover {
                 }
                 return
             }
-            guard date >= retryAfter, !service.associationPending,
+            guard date >= retryAfter, c.switchingAllowed,
                   c.currentSSID == restorationSource || c.wifiDisconnected else { return }
             restore(target)
         case .scanning: break
@@ -249,11 +256,12 @@ final class WifiHandover {
         attemptedSSID = nil
         report(message ?? "Couldn’t connect to \(target). Keeping the hotspot on.")
         // Do not undo a manual network change; restore only the failed attempt's connection.
-        guard owned, let restoreSSID,
-              c.currentSSID == target || c.wifiDisconnected else { return }
+        guard owned, let restoreSSID else { return }
+        guard service.associationPending || c.currentSSID == target || c.wifiDisconnected else { return }
+        pendingAssociationTarget = service.associationPending ? target : nil
         restorationSource = target
         phase = .restoring(restoreSSID, now())
-        if !service.associationPending { restore(restoreSSID) }
+        if !service.associationPending, c.switchingAllowed { restore(restoreSSID) }
     }
 
     private func restore(_ target: String) {
@@ -264,6 +272,9 @@ final class WifiHandover {
             self.restorationInFlight = false
             if success { self.restorationDeadline = self.now().addingTimeInterval(90) }
             else {
+                // The logical timeout can fire before CoreWLAN returns. Retain ownership
+                // through the next observed-link reconciliation, including after pending clears.
+                self.pendingAssociationTarget = self.service.associationPending ? target : nil
                 self.phase = .restoring(target, self.now().addingTimeInterval(5 * 60))
                 self.report("Couldn’t restore \(target). Will retry in five minutes.")
             }

@@ -64,6 +64,14 @@ case "login-status": // local startup diagnostics; never changes registration or
                  "requiresApproval": SMAppService.mainApp.status == .requiresApproval,
                  "legacyEnabled": LoginRegistration.legacyStatus() == .enabled]
     print(String(decoding: try! JSONEncoder().encode(value), as: UTF8.self))
+case "wifi-scan-diagnostic": // explicit read-only diagnosis; never associates or reads credentials
+    guard args.count == 2, let target = args.dropFirst().first else {
+        FileHandle.standardError.write("usage: tetherbug wifi-scan-diagnostic <saved-SSID>\n".data(using: .utf8)!)
+        exit(2)
+    }
+    let report = WifiScanDiagnostic.runOnMac(target: target)
+    print(String(decoding: try! JSONEncoder().encode(report), as: UTF8.self))
+    exit(report.succeeded ? 0 : 1)
 case "debug":
     switch args.dropFirst().first {
     case "on": Settings.debugNotifications = true

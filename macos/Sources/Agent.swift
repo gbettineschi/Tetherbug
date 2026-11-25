@@ -632,8 +632,17 @@ final class Agent: NSObject {
               !wifiPreference.prefersHotspot(), !ssid.isEmpty else { return }
         let activity = self.activity
         scanQueue.async { [weak self] in
-            guard activity.allows(token), let interface = CWWiFiClient.shared().interface() else { return }
-            let networks = (try? interface.scanForNetworks(withName: ssid)) ?? []
+            // The preference can change while this work is queued behind another scan.
+            guard activity.allows(token), !Settings.returnToPreferredWifi,
+                  !WifiPreferenceControl().prefersHotspot(),
+                  let interface = CWWiFiClient.shared().interface() else { return }
+            let networks: Set<CWNetwork>
+            do {
+                networks = try WifiOperationFailure.perform(.cacheSeedScan) { try interface.scanForNetworks(withName: ssid) }
+            } catch {
+                WifiOperationFailure(error, stage: .cacheSeedScan).log()
+                networks = [] // retain the existing single bounded retry for transient failures
+            }
             guard activity.allows(token) else { return }
             let found = networks.contains { $0.ssid == ssid }
             DispatchQueue.main.async {
