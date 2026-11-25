@@ -33,12 +33,13 @@
 
 ## Task 2: Native scanner and app integration
 
-- [ ] Replace the native handover service with a saved-SSID/security-matching scanner; retain actual pending ownership through cancel.
-- [ ] Integrate the policy with automatic Off and the existing disconnected-only On guard. Preserve network-change courtesy, timer and master toggle.
-- [ ] Remove active association, credential access, HTTP probes and obsolete diagnostic CLI; retain unrelated Bluetooth/link tests and add native adapter boundary regressions.
-- [ ] Update Settings labels/help and remove the separate return toggle; preserve the preferred list and timer.
-- [ ] Run tests, universal build and fresh review; resolve material findings before signing.
-- [ ] Install the same-signer Mac trial in place; verify phone connection, login and presence Off with Wi-Fi unchanged if the phone is ready. Record any unverified boundary; keep the PR draft until real acceptance passes.
+- [x] Replace the native handover service with a saved-SSID/security-matching scanner; retain actual pending ownership through cancel.
+- [x] Integrate the policy with automatic Off and the existing disconnected-only On guard. Preserve network-change courtesy, timer and master toggle.
+- [x] Remove active association, credential access, HTTP probes and obsolete diagnostic CLI; retain unrelated Bluetooth/link tests and add native adapter boundary regressions.
+- [x] Update Settings labels/help and remove the separate return toggle; preserve the preferred list and timer.
+- [x] Run tests, universal build and fresh review; resolve material findings before signing.
+- [x] Install the same-signer Mac trial in place; verify worker, login, settings, internet and one installed app.
+- [ ] Verify presence Off on the actual Samsung with Wi-Fi unchanged once its Tetherbug service is reachable. Keep the PR draft until real acceptance passes.
 
 ## Ledger
 
@@ -48,3 +49,5 @@
 - Ruling: remove the old separate directed hotspot-cache seed — native macOS discovery owns that behavior; no extra scan path should evade the common minute throttle. Updated the live protocol guide.
 - Review corrections: gate automatic On on the complete BLE handshake; apply courtesy only to Off; refresh the native link/SSID in completion decisions; stand down presence Off for unknown phone identity; preserve submission throttling across invalidation; filter saved preferred identities before radio work.
 - Verification: policy RED/GREEN passed 155 tests before obsolete association tests were retired. Review regressions produced six expected failures, then the final native suite passed 120 tests, 0 failures (`/tmp/tetherbug-presence-final-suite.log`). Unrelated Bluetooth metadata, sleep, menu and login coverage remains; deleted tests concern removed association, Keychain, HTTP probe and restoration features.
+- Delivery: installed `0.1.13-presence.1`, reviewed source `beeaf2e92c498817e631b15a897cad44dd4cb539`, from successful protected [trial run 45664912763](https://github.com/gbettineschi/Tetherbug/actions/runs/45664912763). Retained signer, universal architectures, new worker, native login enabled/no approval pending, preferred list and timer preserved, retired toggle removed, temporary previous bundle removed, Wi-Fi HTTP 200 confirmed. The temporary exact-branch signing policy was removed; only `v*` remains. No Android build, published release, tap update or merge.
+- Device boundary: the Mac reports Bluetooth On but the phone disconnected. No actual presence-triggered phone Off is claimed for this build. The user has an outstanding readiness question; no further network switching is needed for that acceptance test.
