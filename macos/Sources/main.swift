@@ -69,7 +69,7 @@ case "wifi-scan-diagnostic": // explicit read-only diagnosis; never associates o
         FileHandle.standardError.write("usage: tetherbug wifi-scan-diagnostic <saved-SSID>\n".data(using: .utf8)!)
         exit(2)
     }
-    let report = WifiScanDiagnostic.runOnMac(target: target)
+    let report = MainActor.assumeIsolated { WifiScanDiagnostic.runOnMac(target: target) }
     print(String(decoding: try! JSONEncoder().encode(report), as: UTF8.self))
     exit(report.succeeded ? 0 : 1)
 case "debug":
