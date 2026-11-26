@@ -126,8 +126,9 @@ struct AgentState: Codable, Equatable {
     var automaticSuspended: Bool { automaticPausedUntil != nil }
     var requestPending: Bool?
     var requestError: String?
-    /// Optional Mac-only Wi-Fi handover progress; absent in older agents.
-    var wifiHandoverMessage: String?
+    /// Optional Mac-only preferred-network presence status.
+    var preferredWifiMessage: String?
+    var preferredWifiOffNotBefore: Date?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
     /// Local Mac worker identity; optional for compatibility with older snapshots.
@@ -150,11 +151,6 @@ struct AgentState: Codable, Equatable {
 enum Settings {
     static let defaults = UserDefaults(suiteName: "ie.xav.tetherbug.settings") ?? .standard
 
-    static var returnToPreferredWifi: Bool {
-        get { defaults.bool(forKey: "returnToPreferredWifi") }
-        set { defaults.set(newValue, forKey: "returnToPreferredWifi") }
-    }
-
     static var preferredWifiNetworks: [String] {
         get { defaults.stringArray(forKey: "preferredWifiNetworks") ?? [] }
         set { defaults.set(newValue, forKey: "preferredWifiNetworks") }
@@ -165,7 +161,7 @@ enum Settings {
         set { defaults.set(newValue?.uuidString, forKey: "preferredPhone") }
     }
 
-    /// Ask for the hotspot when the Mac's Wi-Fi has no connection.
+    /// Legacy stored key for Automatic Mode, governing automatic hotspot On and preferred-presence Off.
     static var onNoWifi: Bool {
         get { defaults.object(forKey: "onNoWifi") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "onNoWifi") }

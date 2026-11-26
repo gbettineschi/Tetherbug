@@ -37,21 +37,18 @@ final class Agent: NSObject {
     private var maintenance: Timer?
     private var nextReadinessCheck = Date.distantPast
     private let control = HotspotControl()
+    private let wifiPreference = WifiPreferenceControl()
     private var menuBar: MenuBarController?
     private var wifi: NWPathMonitor?
     private let scanQueue = DispatchQueue(label: "ie.xav.tetherbug.scan")
-    private var wifiPathConnected = false
-    private var wifiInterface: NWInterface?
-    private lazy var wifiService = MacWifiHandoverService(activity: activity, queue: scanQueue,
-        wifiInterface: { [weak self] in self?.wifiInterface })
-    private lazy var handover = WifiHandover(service: wifiService,
-        context: { [unowned self] in self.handoverContext() },
-        turnOff: { [weak self] in self?.request(false, reason: "preferred Wi-Fi verified") },
-        report: { [weak self] in self?.state.wifiHandoverMessage = $0 })
+    private lazy var wifiScanner = MacWifiPresenceScanner(activity: activity, queue: scanQueue)
+    private lazy var preferredPresence = PreferredWifiPresence(scanner: wifiScanner,
+        context: { [unowned self] in self.presenceContext() },
+        turnOff: { [weak self] in self?.request(false, reason: "preferred Wi-Fi available") },
+        report: { [weak self] in self?.state.preferredWifiMessage = $0 })
     private var offlineSince: Date?
     private var backoff: TimeInterval = 2
     private var nextRetry = Date.distantPast
-    private var pendingFullScan: DispatchWorkItem? // the full-scan fallback while the frequency is unknown
     private var state = AgentState() {
         didSet {
             if state != oldValue {
@@ -68,6 +65,7 @@ final class Agent: NSObject {
     }
 
     func run() {
+        Settings.defaults.removeObject(forKey: "returnToPreferredWifi")
         // A login service can take over from a session worker left behind after Settings closed.
         // It must own the lock before binding the socket or starting Bluetooth.
         let handover: (() -> AgentLock.Handover)? = isLoginAgent && activity.active ? {
@@ -128,18 +126,6 @@ final class Agent: NSObject {
         case "toggle": toggleFromMenu()
         case "automatic on": setAutomatic(true)
         case "automatic off": setAutomatic(false)
-        case "connect-hotspot":
-            // Local diagnostic/manual join. Hold preferred handover first, so it cannot race
-            // the explicit connection request; reuse the same native saved-profile backend.
-            guard radioAllowed(), !Settings.returnToPreferredWifi, state.connected,
-                  state.status?.hotspot == .on, statusReceiver.ready, statusSubscription.ready,
-                  let ssid = state.status?.ssid, !ssid.isEmpty else { return state }
-            handover.cancel()
-            state.wifiHandoverMessage = "Connecting to the phone’s hotspot…"
-            wifiService.join(ssid) { [weak self] success in
-                guard let self, self.radioAllowed() else { return }
-                self.state.wifiHandoverMessage = success ? nil : "Couldn’t join the phone’s hotspot."
-            }
         case "quit": quit()
         case "handover":
             guard !isLoginAgent, state.managedBy == nil, !exiting else { return state }
@@ -179,7 +165,6 @@ final class Agent: NSObject {
     }
 
     private func resumeRadio() {
-        wifiService.resumeAfterSleep()
         let token = activity.generation
         recovery.restart()
         offlineSince = nil
@@ -205,14 +190,9 @@ final class Agent: NSObject {
     }
 
     private func suspendRadio() {
-        handover.cancel()
-        wifiService.suspend()
-        wifiPathConnected = false
-        wifiInterface = nil
+        preferredPresence.cancel()
         maintenance?.invalidate()
         maintenance = nil
-        pendingFullScan?.cancel()
-        pendingFullScan = nil
         wifi?.cancel()
         wifi = nil
         let hadRadio = central != nil
@@ -227,11 +207,14 @@ final class Agent: NSObject {
     }
 
     private func wifiChanged(_ path: NWPath) {
+        refreshWifiLink()
+        tick()
+    }
+
+    private func refreshWifiLink() {
         let interface = CWWiFiClient.shared().interface()
-        wifiInterface = path.availableInterfaces.first { $0.type == .wifi && $0.name == interface?.interfaceName }
-        wifiPathConnected = path.status == .satisfied && wifiInterface != nil
-        let poweredOn = interface?.powerOn() ?? false
-        let offline = poweredOn && path.status != .satisfied
+        let link = interface?.interfaceName.flatMap { WifiAccess.linkActive(device: $0) }
+        let offline = WifiAccess.isDisconnected(poweredOn: interface?.powerOn() == true, linkActive: link)
         if offline != state.wifiOffline { note(offline ? "Wi-Fi lost" : "Wi-Fi connected") }
         state.wifiOffline = offline
         if offline {
@@ -243,11 +226,11 @@ final class Agent: NSObject {
         } else {
             offlineSince = nil
         }
-        tick()
     }
 
     private func tick() {
         guard radioAllowed() else { return }
+        refreshWifiLink()
         maintainConnection()
         if let action = statusSubscription.due() {
             applyStatusAction(action)
@@ -261,8 +244,9 @@ final class Agent: NSObject {
             phone.readValue(for: statusCharacteristic)
         }
         control.refresh(state)
+        wifiPreference.refresh()
         publishControl()
-        handover.tick()
+        preferredPresence.tick()
         if control.needsReconnect {
             if state.stopping != true, !reconnectRequested, let phone {
                 reconnectRequested = true
@@ -270,7 +254,7 @@ final class Agent: NSObject {
             }
             return
         }
-        guard state.stopping != true, !handover.busy, control.shouldAutomaticallyEnable(state),
+        guard state.stopping != true, !preferredPresence.blocksAutomaticEnable, control.shouldAutomaticallyEnable(state, phoneReady: statusReceiver.ready && statusSubscription.ready),
               command != nil, offlineSince != nil, Date() >= nextRetry else { return }
         request(true, reason: "no Wi-Fi")
         nextRetry = Date().addingTimeInterval(backoff)
@@ -279,7 +263,6 @@ final class Agent: NSObject {
 
     func request(_ on: Bool, reason: String) {
         guard radioAllowed() else { return }
-        handover.cancel()
         state.lastRequest = "\(on ? "enable" : "disable") (\(reason)) at \(ISO8601DateFormatter().string(from: Date()))"
         guard let phone, let command else {
             note("\(on ? "enable" : "disable") requested (\(reason)) but the phone isn't connected")
@@ -295,7 +278,7 @@ final class Agent: NSObject {
 
     private func toggleFromMenu() {
         guard radioAllowed() else { return }
-        handover.cancel()
+        preferredPresence.cancel()
         guard let phone, let command, let on = control.toggle(state) else { return }
         state.lastRequest = "\(on ? "enable" : "disable") (menu) at \(ISO8601DateFormatter().string(from: Date()))"
         // Publish the pause before issuing Off, so no retry can immediately turn it back on.
@@ -311,29 +294,34 @@ final class Agent: NSObject {
     }
 
     private func automaticControlChanged() {
-        handover.cancel()
+        preferredPresence.cancel()
         publishControl()
         backoff = 2
         nextRetry = max(Date(), (offlineSince ?? Date()).addingTimeInterval(TimeInterval(Settings.disconnectWait)))
         tick()
     }
 
-    private func handoverContext() -> WifiHandover.Context {
-        let enabled = Settings.returnToPreferredWifi
-        let networks = Settings.preferredWifiNetworks
-        var c = WifiHandover.Context(allowed: activity.allows(activity.generation) && state.stopping != true,
-            enabled: enabled, automaticActive: control.automaticActive(), preferred: networks,
-            currentSSID: nil, wifiConnected: wifiPathConnected,
-            hotspotSSID: state.status?.ssid, hotspotOn: state.status?.hotspot == .on,
-            canControlHotspot: control.canToggle(state) && statusReceiver.ready && statusSubscription.ready,
-            wifiPoweredOn: false, locationAllowed: false)
-        // Do not poll hardware or location authorization for disabled/paused/ineligible handover.
-        guard c.allowed, c.enabled, c.automaticActive, c.hotspotOn, c.canControlHotspot,
-              !c.candidates.isEmpty, wifiService.locationAllowed else { return c }
-        c.locationAllowed = true
-        let interface = CWWiFiClient.shared().interface()
-        c.currentSSID = interface?.ssid()
-        c.wifiPoweredOn = interface?.powerOn() == true
+    private func presenceContext() -> PreferredWifiPresence.Context {
+        var c = PreferredWifiPresence.Context(allowed: activity.allows(activity.generation) && state.stopping != true,
+            automaticActive: control.automaticActive(),
+            phoneReady: state.connected && statusReceiver.ready && statusSubscription.ready && state.status?.controllable == true,
+            canTurnOff: control.canToggle(state), hotspotOn: state.status?.hotspot == .on,
+            wifiDisconnected: state.wifiOffline, wifiPoweredOn: false, locationAllowed: false,
+            preferred: Settings.preferredWifiNetworks, hotspotSSID: state.status?.ssid)
+        c.courtesyElapsed = wifiPreference.canTurnOff()
+        guard c.allowed, c.automaticActive, c.phoneReady,
+              !c.identities.isEmpty else { return c }
+        c.locationAllowed = wifiScanner.locationAllowed
+        if c.locationAllowed {
+            // This snapshot is also taken at asynchronous completion, before a delayed
+            // timer/path notification could otherwise miss the user's native network choice.
+            refreshWifiLink()
+            let interface = CWWiFiClient.shared().interface()
+            wifiPreference.observeNetwork(interface?.ssid(), disconnected: state.wifiOffline)
+            c.wifiDisconnected = state.wifiOffline
+            c.wifiPoweredOn = interface?.powerOn() == true
+            c.courtesyElapsed = wifiPreference.canTurnOff()
+        }
         return c
     }
 
@@ -343,6 +331,7 @@ final class Agent: NSObject {
         snapshot.automaticPausedUntil = control.pausedUntil
         snapshot.requestPending = control.isPending
         snapshot.requestError = control.error
+        snapshot.preferredWifiOffNotBefore = wifiPreference.offNotBefore
         state = snapshot
     }
 
@@ -504,9 +493,6 @@ final class Agent: NSObject {
         nextReadinessCheck = Date().addingTimeInterval(10)
         // Re-read the password whenever the hotspot comes on, in case it was changed on the phone.
         if status.hotspot != state.status?.hotspot { note("phone hotspot \(status.hotspot.rawValue)") }
-        if status.hotspot == .on, state.status?.hotspot != .on || (state.status?.frequency == 0 && status.frequency != 0) {
-            refreshWifiScan(status)
-        }
         if status.hotspot == .on, state.status?.hotspot != .on, let credentials { peripheral.readValue(for: credentials) }
         state.status = status
         control.refresh(state, receivedStatus: true)
@@ -541,81 +527,6 @@ final class Agent: NSObject {
         if let error { note("command failed: \(error.localizedDescription)") }
     }
 
-    /// The Wi-Fi menu lists macOS's last scan, which predates a hotspot that just came on. Given the
-    /// hotspot's frequency, scan just that channel every 250 ms until the hotspot shows up (it may not
-    /// be broadcasting yet), for up to 10 s; CoreWiFi results carry names, so match its SSID as well
-    /// as the Personal Hotspot flag. Otherwise fall back to full scans.
-    private func refreshWifiScan(_ status: PhoneStatus) {
-        guard radioAllowed() else { return }
-        let token = activity.generation
-        pendingFullScan?.cancel()
-        guard let scanner = ChannelScanner.shared else { return fullWifiScan(token: token) }
-        guard let channel = scanner.channel(frequency: status.frequency) else {
-            // The phone reports "on" just before Android tells it the frequency; a full scan started
-            // now would hold up the channel scan behind it, so give the frequency a moment.
-            let fallback = DispatchWorkItem { [weak self] in
-                guard let self, self.radioAllowed(token) else { return }
-                self.fullWifiScan(token: token)
-            }
-            pendingFullScan = fallback
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: fallback)
-            return
-        }
-        note("scanning for the hotspot on \(status.frequency) MHz")
-        let activity = self.activity
-        scanQueue.async { [weak self] in
-            let start = Date()
-            var seen = false
-            repeat {
-                guard activity.allows(token) else { return }
-                guard let networks = scanner.scan(channel) else {
-                    DispatchQueue.main.async {
-                        guard let self, self.radioAllowed(token) else { return }
-                        self.note("channel scan failed")
-                        self.fullWifiScan(token: token)
-                    }
-                    return
-                }
-                guard activity.allows(token) else { return }
-                seen = networks.contains { isPersonalHotspot($0) || (!status.ssid.isEmpty && networkName($0) == status.ssid) }
-                if !seen { Thread.sleep(forTimeInterval: 0.25) }
-            } while !seen && Date().timeIntervalSince(start) < 10
-            let elapsed = String(format: "%.1f", Date().timeIntervalSince(start))
-            let result = seen
-            DispatchQueue.main.async {
-                guard let self, self.radioAllowed(token) else { return }
-                self.note("hotspot \(result ? "seen" : "not seen") after \(elapsed) s")
-            }
-        }
-    }
-
-    /// A full scan sweeps every channel (~12 s), and airportd gives a process at most one per 10 s
-    /// (counted from the end of the last), so the one retry waits that long. It can only match the
-    /// Personal Hotspot flag: macOS hides network names here without Location access.
-    private func fullWifiScan(attempt: Int = 1, token: UInt64) {
-        guard radioAllowed(token) else { return }
-        note("scanning for the hotspot (attempt \(attempt))")
-        let activity = self.activity
-        scanQueue.async { [weak self] in
-            guard activity.allows(token) else { return }
-            // CoreWLAN cannot cancel a synchronous scan already handed to macOS. Do not wait
-            // for it during sleep; discard its result and forbid subsequent work instead.
-            let networks = (try? CWWiFiClient.shared().interface()?.scanForNetworks(withName: nil)) ?? []
-            guard activity.allows(token) else { return }
-            let found = networks.contains(where: isPersonalHotspot)
-            DispatchQueue.main.async {
-                guard let self, self.radioAllowed(token), !found, attempt < 2 else { return }
-                let retry = DispatchWorkItem { [weak self] in
-                    guard let self, self.radioAllowed(token), self.state.status?.hotspot == .on else { return }
-                    self.fullWifiScan(attempt: attempt + 1, token: token)
-                }
-                self.pendingFullScan?.cancel()
-                self.pendingFullScan = retry
-                DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: retry)
-            }
-        }
-    }
-
     /// Logs, and with debug notifications on also posts the line as a notification.
     private func note(_ message: String) {
         log(message)
@@ -640,80 +551,6 @@ final class Agent: NSObject {
         clearPhoneConnection()
         recovery.restart()
         maintainConnection()
-    }
-}
-
-/// Whether macOS saw Apple's Personal Hotspot element in the network's beacon (the private
-/// `isPersonalHotspot` of CWNetwork and CWFScanResult; false if a macOS release drops it).
-func isPersonalHotspot(_ network: NSObject) -> Bool {
-    guard network.responds(to: NSSelectorFromString("isPersonalHotspot")) else { return false }
-    return (network.value(forKey: "isPersonalHotspot") as? Bool) ?? false
-}
-
-/// A CWFScanResult's network name, which CoreWiFi doesn't hide without Location access.
-func networkName(_ network: NSObject) -> String? {
-    guard network.responds(to: NSSelectorFromString("networkName")) else { return nil }
-    return network.value(forKey: "networkName") as? String
-}
-
-/// CoreWiFi's scan of chosen channels, loaded at runtime so the app links no private framework; nil
-/// when CoreWiFi or a call it needs is missing. Scanning one channel takes a fraction of a second,
-/// isn't held to airportd's one full scan per 10 s, and updates the scan cache the Wi-Fi menu shows.
-final class ChannelScanner {
-    static let shared = ChannelScanner()
-    private static let scanSelector = NSSelectorFromString("performScanWithParameters:error:")
-    private typealias Scan = @convention(c) (AnyObject, Selector, AnyObject, AutoreleasingUnsafeMutablePointer<NSError?>?) -> AnyObject?
-    private let interface: NSObject
-    private let parametersClass: NSObject.Type
-    private let channelClass: NSObject.Type
-
-    private init?() {
-        let responds = { (type: NSObject.Type, selectors: [String]) in selectors.allSatisfy { type.instancesRespond(to: NSSelectorFromString($0)) } }
-        guard dlopen("/System/Library/PrivateFrameworks/CoreWiFi.framework/CoreWiFi", RTLD_LAZY) != nil,
-              let interfaceClass = NSClassFromString("CWFInterface") as? NSObject.Type,
-              let parametersClass = NSClassFromString("CWFScanParameters") as? NSObject.Type,
-              let channelClass = NSClassFromString("CWFChannel") as? NSObject.Type,
-              responds(interfaceClass, ["activate", "performScanWithParameters:error:"]),
-              responds(parametersClass, ["setChannels:"]),
-              responds(channelClass, ["setChannel:", "setFlags:"]),
-              CWChannel.instancesRespond(to: NSSelectorFromString("flags"))
-        else { return nil }
-        interface = interfaceClass.init()
-        interface.perform(NSSelectorFromString("activate"))
-        self.parametersClass = parametersClass
-        self.channelClass = channelClass
-    }
-
-    /// The 20 MHz channel at `frequency` MHz with the flags macOS gives it (band, DFS, passive), or
-    /// nil if the frequency is unknown or this Mac can't use it.
-    func channel(frequency: Int) -> NSObject? {
-        let number: Int, band: CWChannelBand
-        switch frequency {
-        case 2484: (number, band) = (14, .band2GHz)
-        case 2412...2472: (number, band) = ((frequency - 2407) / 5, .band2GHz)
-        case 5160...5885: (number, band) = ((frequency - 5000) / 5, .band5GHz)
-        case 5935: (number, band) = (2, .band6GHz)
-        case 5955...7115: (number, band) = ((frequency - 5950) / 5, .band6GHz)
-        default: return nil
-        }
-        let supported = CWWiFiClient.shared().interface()?.supportedWLANChannels()?.first {
-            $0.channelNumber == number && $0.channelBand == band && $0.channelWidth == .width20MHz
-        }
-        guard let flags = supported?.value(forKey: "flags") as? Int else { return nil }
-        let channel = channelClass.init()
-        channel.setValue(number, forKey: "channel")
-        channel.setValue(flags, forKey: "flags")
-        return channel
-    }
-
-    /// Scans `channel` live (blocking); nil on failure.
-    func scan(_ channel: NSObject) -> [NSObject]? {
-        let parameters = parametersClass.init()
-        parameters.setValue([channel], forKey: "channels")
-        let perform = unsafeBitCast(interface.method(for: Self.scanSelector), to: Scan.self)
-        var error: NSError?
-        let results = perform(interface, Self.scanSelector, parameters, &error) as? [NSObject]
-        return error == nil ? results : nil
     }
 }
 

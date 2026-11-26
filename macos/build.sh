@@ -44,9 +44,9 @@ cat > "$app/Contents/Info.plist" <<EOF
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSMinimumSystemVersion</key><string>$min_macos</string>
-  <key>NSBluetoothAlwaysUsageDescription</key><string>Tetherbug talks to your phone over Bluetooth to turn its hotspot on when your Mac has no Wi-Fi.</string>
-  <key>NSLocationUsageDescription</key><string>Tetherbug identifies your selected Wi-Fi networks to switch back from your phone’s hotspot. It does not track your location.</string>
-  <key>NSLocationWhenInUseUsageDescription</key><string>Tetherbug identifies your selected Wi-Fi networks to switch back from your phone’s hotspot. It does not track your location.</string>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>Tetherbug talks to your phone over Bluetooth to control its mobile hotspot from this Mac.</string>
+  <key>NSLocationUsageDescription</key><string>Tetherbug identifies nearby preferred Wi-Fi networks to turn off your phone’s hotspot automatically. It does not track your location.</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>Tetherbug identifies nearby preferred Wi-Fi networks to turn off your phone’s hotspot automatically. It does not track your location.</string>
 </dict></plist>
 EOF
 

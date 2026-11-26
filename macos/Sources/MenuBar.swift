@@ -144,6 +144,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             ]))
         }
         automaticItem.attributedTitle = title
+
     }
 
     @objc private func changeHotspot(_ sender: Any?) {

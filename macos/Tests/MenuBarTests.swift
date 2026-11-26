@@ -10,6 +10,16 @@ func runMenuBarTests() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.accessory)
 
+    test("Automatic Mode is the only automation menu with timed suspension") {
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onSettings: {}, onQuit: {})
+        var state = phoneState(); state.automatic = true; menu.update(state)
+        expect(!menu.menu.items.contains { $0.title.contains("Prefer hotspot") }, "remove the redundant preference menu")
+        expect(menu.menu.items.contains { $0.title == "Automatic Mode" }, "keep the single master switch")
+        let durations = menu.menu.items.first { $0.title == "Turn off automatic mode for…" }?.submenu
+        expect(durations?.items.contains { $0.title == "6 hours" } == true, "six-hour suspension remains under Automatic Mode")
+        expect(durations?.items.contains { $0.title == "Indefinitely" } == true, "indefinite Off remains available")
+    }
+
     test("native command menu width stays stable when the Auto checkmark changes") {
         let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onSettings: {}, onQuit: {})
         // Measure command rows without the wide custom header masking native gutter changes.
@@ -56,7 +66,7 @@ func runMenuBarTests() {
         guard let item = menu.menu.items.first(where: { $0.title == "Turn off automatic mode for…" }), let submenu = item.submenu else {
             expect(false, "native duration submenu exists"); return
         }
-        expect(submenu.items.map(\.title) == ["15 minutes", "30 minutes", "1 hour", "2 hours", "3 hours", "Today", "Indefinitely"], "timed and indefinite choices are offered")
+        expect(submenu.items.map(\.title) == ["15 minutes", "30 minutes", "1 hour", "2 hours", "3 hours", "6 hours", "Today", "Indefinitely"], "timed and indefinite choices are offered")
         for index in submenu.items.indices { submenu.performActionForItem(at: index) }
         expect(selected == AutomaticPauseDuration.allCases, "every native menu action reaches the selected policy")
     }
@@ -115,7 +125,7 @@ func runMenuBarTests() {
         let auto = menu.menu.items.first { $0.action == #selector(MenuBarController.changeAutomatic(_:)) }!
         expect(auto.state == .off, "disabled automatic mode is unchecked")
         menu.menu.performActionForItem(at: menu.menu.index(of: auto))
-        expect(control.automatic && control.shouldAutomaticallyEnable(state, now: now), "menu click resumes even from Settings Off")
+        expect(control.automatic && control.shouldAutomaticallyEnable(state, phoneReady: true, now: now), "menu click resumes even from Settings Off")
     }
 
     test("Finder reopening the accessory agent routes to the regular settings window") {

@@ -49,8 +49,8 @@ test("automatic Off pauses for 300 seconds and survives control recreation") {
     expect(control.toggle(phoneState(.on), now: now) == false, "request Off")
     expect(control.pausedUntil == now.addingTimeInterval(300), "5-minute expiry")
     let restarted = HotspotControl(defaults: defaults)
-    expect(!restarted.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(299)), "no activation before expiry")
-    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(300)), "activation at expiry")
+    expect(!restarted.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(299)), "no activation before expiry")
+    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(300)), "activation at expiry")
 }
 
 test("expired pause does not enable hotspot on working Wi-Fi") {
@@ -59,7 +59,7 @@ test("expired pause does not enable hotspot on working Wi-Fi") {
     let restarted = HotspotControl(defaults: defaults)
     var connectedWiFi = phoneState(.off)
     connectedWiFi.wifiOffline = false
-    expect(!restarted.shouldAutomaticallyEnable(connectedWiFi, now: now.addingTimeInterval(901)), "working Wi-Fi wins")
+    expect(!restarted.shouldAutomaticallyEnable(connectedWiFi, phoneReady: true, now: now.addingTimeInterval(901)), "working Wi-Fi wins")
     restarted.refresh(connectedWiFi, now: now.addingTimeInterval(901))
     expect(restarted.pausedUntil == nil, "expired deadline cleaned up")
 }
@@ -78,11 +78,11 @@ test("changing automatic mode clears an old pause") {
     _ = control.toggle(phoneState(.on), now: now)
     control.automatic = false
     expect(control.pausedUntil == nil, "disabling clears pause")
-    expect(!control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(901)), "disabled stays disabled")
+    expect(!control.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(901)), "disabled stays disabled")
     control.automatic = true
     control.writeCompleted(error: nil)
     control.refresh(phoneState(.off), now: now, receivedStatus: true)
-    expect(control.shouldAutomaticallyEnable(phoneState(.off), now: now), "enabling resumes")
+    expect(control.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now), "enabling resumes")
 }
 
 test("settings-window changes clear pause and are reflected by the policy") {
@@ -100,7 +100,7 @@ test("unknown, disconnected, Shizuku-unavailable and starting states reject togg
     disconnected.connected = false
     for state in [AgentState(), disconnected, phoneState(.off, controllable: false), phoneState(.starting)] {
         expect(control.toggle(state, now: now) == nil, "unavailable command rejected")
-        expect(!control.shouldAutomaticallyEnable(state, now: now), "Auto also waits for readiness")
+        expect(!control.shouldAutomaticallyEnable(state, phoneReady: true, now: now), "Auto also waits for readiness")
     }
     expect(control.pausedUntil == nil, "rejected action cannot create a pause")
 }
@@ -110,7 +110,7 @@ test("pending request blocks repeated clicks and automatic requests until phone 
     expect(control.toggle(phoneState(.off), now: now) == true, "first command accepted")
     expect(control.isPending, "await actual state")
     expect(control.toggle(phoneState(.off), now: now.addingTimeInterval(1)) == nil, "double click ignored")
-    expect(!control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(1)), "no competing Auto request")
+    expect(!control.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(1)), "no competing Auto request")
     control.writeCompleted(error: nil)
     control.refresh(phoneState(.starting), now: now.addingTimeInterval(2), receivedStatus: true)
     expect(control.isPending, "starting is not success")
@@ -133,7 +133,7 @@ test("BLE error releases pending state and preserves the automatic pause") {
     _ = control.toggle(phoneState(.on), now: now)
     control.writeCompleted(error: "Bluetooth write failed")
     expect(!control.isPending && control.error == "Bluetooth write failed", "write failure visible")
-    expect(!control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(20)), "failed Off still honors user's pause")
+    expect(!control.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(20)), "failed Off still honors user's pause")
 }
 
 test("disconnect and Shizuku loss fail an in-flight request") {
@@ -164,7 +164,7 @@ test("explicit resume cancels a persisted pause") {
     _ = control.toggle(phoneState(.on), now: now)
     let restarted = HotspotControl(defaults: defaults)
     restarted.resume()
-    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), now: now), "resume permits automatic activation")
+    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now), "resume permits automatic activation")
 }
 
 test("idempotent CLI requests do not time out when the phone already reports the target state") {
@@ -218,8 +218,8 @@ test("phone-side hotspot shutdown pauses automatic activation for 5 minutes") {
     control.refresh(phoneState(.off), now: now.addingTimeInterval(10), receivedStatus: true)
     expect(control.pausedUntil == now.addingTimeInterval(310), "phone Off starts a new 300-second cooldown")
     let restarted = HotspotControl(defaults: defaults)
-    expect(!restarted.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(309)), "restart cannot bypass the cooldown")
-    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(310)), "automatic activation resumes at the deadline")
+    expect(!restarted.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(309)), "restart cannot bypass the cooldown")
+    expect(restarted.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(310)), "automatic activation resumes at the deadline")
 }
 
 test("repeated Off reports do not continually postpone the cooldown") {
@@ -229,7 +229,7 @@ test("repeated Off reports do not continually postpone the cooldown") {
     control.refresh(phoneState(.off), now: now.addingTimeInterval(100), receivedStatus: true)
     control.refresh(phoneState(.off), now: now.addingTimeInterval(309))
     expect(control.pausedUntil == now.addingTimeInterval(310), "only the transition into Off starts the pause")
-    expect(control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(310)), "periodic snapshots cannot postpone reactivation")
+    expect(control.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(310)), "periodic snapshots cannot postpone reactivation")
 }
 
 test("a phone Off report after Bluetooth recovery does not create a cooldown") {
@@ -241,7 +241,7 @@ test("a phone Off report after Bluetooth recovery does not create a cooldown") {
     expect(control.pausedUntil == nil, "Bluetooth loss by itself is not hotspot loss")
     control.refresh(phoneState(.off), now: now.addingTimeInterval(10), receivedStatus: true)
     expect(control.pausedUntil == nil, "a state first discovered after reconnection is not a nearby shutdown event")
-    expect(control.shouldAutomaticallyEnable(phoneState(.off), now: now.addingTimeInterval(11)), "moving away and returning retains normal automatic activation")
+    expect(control.shouldAutomaticallyEnable(phoneState(.off), phoneReady: true, now: now.addingTimeInterval(11)), "moving away and returning retains normal automatic activation")
 }
 
 test("first Off report and manual-mode shutdown do not create a cooldown") {
@@ -267,12 +267,12 @@ test("menu Automatic Mode turns off without a deadline and stays off until expli
     control.setAutomaticActive(false)
     expect(!control.automatic && control.pausedUntil == nil, "menu Off disables automatic mode without expiry")
     let restarted = HotspotControl(defaults: defaults)
-    expect(!restarted.shouldAutomaticallyEnable(phoneState(), now: now.addingTimeInterval(86400 * 365)), "restart or elapsed time cannot resume disabled mode")
+    expect(!restarted.shouldAutomaticallyEnable(phoneState(), phoneReady: true, now: now.addingTimeInterval(86400 * 365)), "restart or elapsed time cannot resume disabled mode")
     expect(restarted.toggle(phoneState(.off), now: now) == true && !restarted.automatic, "manual hotspot On does not re-enable disabled automatic mode")
     restarted.writeCompleted(error: nil)
     restarted.refresh(phoneState(.on), now: now, receivedStatus: true)
     restarted.setAutomaticActive(true)
-    expect(restarted.pausedUntil == nil && restarted.shouldAutomaticallyEnable(phoneState(), now: now), "clicking Auto resumes")
+    expect(restarted.pausedUntil == nil && restarted.shouldAutomaticallyEnable(phoneState(), phoneReady: true, now: now), "clicking Auto resumes")
 }
 
 test("selected durations replace rather than accumulate deadlines") {
@@ -295,7 +295,7 @@ test("Indefinitely replaces a timed suspension with disabled automatic mode") {
     control.pauseAutomatic(for: indefinite, now: now.addingTimeInterval(10))
     expect(!control.automatic && control.pausedUntil == nil, "Indefinitely disables without an until label")
     let restarted = HotspotControl(defaults: defaults)
-    expect(!restarted.shouldAutomaticallyEnable(phoneState(), now: now.addingTimeInterval(86400 * 365)), "Indefinitely persists across restart and never expires")
+    expect(!restarted.shouldAutomaticallyEnable(phoneState(), phoneReady: true, now: now.addingTimeInterval(86400 * 365)), "Indefinitely persists across restart and never expires")
     restarted.pauseAutomatic(for: .minutes15, now: now)
     expect(restarted.automatic && restarted.pausedUntil == now.addingTimeInterval(900), "a timed choice replaces disabled mode")
     restarted.pauseAutomatic(for: indefinite, now: now)
@@ -322,7 +322,7 @@ test("upgrading an earlier trial preserves its indefinite suspension as disabled
     let upgraded = HotspotControl(defaults: defaults)
     expect(!upgraded.automatic && upgraded.pausedUntil == nil, "legacy indefinite state becomes Off with no deadline")
     expect(defaults.object(forKey: "automaticPausedIndefinitely") == nil, "obsolete trial preference is removed")
-    expect(!HotspotControl(defaults: defaults).shouldAutomaticallyEnable(phoneState(), now: now.addingTimeInterval(86400)), "migration remains Off after another restart")
+    expect(!HotspotControl(defaults: defaults).shouldAutomaticallyEnable(phoneState(), phoneReady: true, now: now.addingTimeInterval(86400)), "migration remains Off after another restart")
 }
 
 test("menu can resume or choose a duration even after automatic mode was disabled in Settings") {
@@ -353,7 +353,9 @@ test("automatic shutdown cooldowns never shorten an explicit suspension") {
 runMenuBarTests()
 runBluetoothRecoveryTests()
 runPowerActivityTests()
-runWifiHandoverTests()
+runPreferredWifiPresenceTests()
+runWifiAccessTests()
+runWifiPreferenceTests()
 for suite in suites { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
 print("\(count) tests, \(failures) failures")
 exit(failures == 0 ? 0 : 1)

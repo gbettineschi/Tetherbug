@@ -55,25 +55,29 @@ running. Open Tetherbug once from Applications so macOS asks for Bluetooth acces
 
 Use this fork’s release downloads to retain the patches. See [personal releases](personal-releases.md) for signing and update details. Do not use the original author’s Homebrew cask: it installs upstream builds.
 
-### Return from the hotspot to preferred Wi-Fi (Mac only)
+### Turn off near preferred Wi-Fi (Mac only)
 
-In Tetherbug Settings, enable **Return to preferred Wi-Fi**, allow Wi-Fi network access, and add
-your home, university or other saved networks. You can choose **Add Saved Network…**, **Use Current
-Network**, or type the exact Wi-Fi name. Connect to a new network normally in macOS once before
-adding it here; Tetherbug uses macOS’s saved credentials and does not collect passwords.
+Automatic Mode controls both automatic actions: request hotspot On when Wi-Fi is physically
+disconnected, and request Off when a preferred saved network is visible. In Settings, allow
+Wi-Fi network access and add your home, university or other saved networks. There is no separate
+return-to-preferred toggle. Enable Auto-join for those networks in macOS.
 
-While the Mac is fully awake, Automatic Mode is active and the phone hotspot is on, Tetherbug
-checks for listed networks at most once per minute. It tries them in list order when using the
-phone’s hotspot or when Wi-Fi is disconnected, leaving an unrelated working Wi-Fi connection alone.
-After joining, it waits three seconds for a stable connection and checks Apple’s HTTPS connectivity
-endpoint over Wi-Fi. Only then does it turn off the hotspot. This also works if macOS joins a listed
-network itself. Captive portals and failed internet checks keep the hotspot on; an unsuccessful
-handover attempts to return to the hotspot and backs off that candidate for five minutes.
+Tetherbug performs read-only discovery at most once a minute while the hotspot is on or the Mac
+is disconnected. It matches saved SSID bytes and security, excludes the phone hotspot, and leaves
+association and authentication entirely to macOS. It never retrieves saved Wi-Fi passwords,
+initiates a connection, changes profiles or checks the preferred network's internet access.
+A visible network may still have a captive portal or broken internet; macOS decides whether to join.
 
-macOS requires Location permission for Wi-Fi names. Tetherbug requests permission only from Settings
-and never requests location updates. Automatic-mode pauses apply to handover too; sleep and DarkWake
-cancel pending work. This is entirely Mac-side: the Android app needs no update. Network switching
-can briefly interrupt transfers, so pause Automatic Mode while you need to stay on the hotspot.
+Fresh preferred presence also suppresses automatic On, preventing a repeated On/Off cycle if
+macOS cannot connect. Leaving its range allows ordinary activation after a fresh check. A failed
+or timed-out check never requests Off and does not strand the Mac waiting indefinitely for On.
+A native/manual network change gives automatic Off a five-minute courtesy period; it does not
+bypass the presence check before On.
+
+Automatic Mode Off and its timed pauses suspend both automatic actions.
+The manual Mobile Hotspot switch remains available. macOS requires Location permission for Wi-Fi
+names; Tetherbug requests it only from Settings and never requests location updates. Sleep and
+DarkWake invalidate queued work. This is entirely Mac-side; Android needs no update.
 
 ### From the releases page
 
@@ -101,7 +105,7 @@ The existing background agent also displays a native hotspot icon. No extra help
 
 - **Click or right-click:** open the native menu. Use the **Mobile Hotspot** switch to toggle the hotspot, or change **Automatic mode** in the menu.
 - With **Automatic mode** on, turning the hotspot off pauses activation for **5 minutes**. Turning the hotspot on manually cancels the suspension.
-- Click **Automatic Mode** to turn it off with no deadline, or click it again to resume. The checkmark appears only while automatic activation is active. **Turn off automatic mode for…** offers 15 minutes, 30 minutes, 1 hour, 2 hours, 3 hours, Today (until the next local midnight), and Indefinitely. Each choice replaces the previous deadline rather than adding to it. Indefinitely disables automatic mode with no expiry, just like clicking Automatic Mode off.
+- Click **Automatic Mode** to turn it off with no deadline, or click it again to resume. The checkmark appears only while automatic activation is active. **Turn off automatic mode for…** offers 15 minutes, 30 minutes, 1 hour, 2 hours, 3 hours, 6 hours, Today (until the next local midnight), and Indefinitely. Each choice replaces the previous deadline rather than adding to it. Indefinitely disables automatic mode with no expiry, just like clicking Automatic Mode off.
 - A timed suspension shows **Turned off until…** beside Automatic Mode; mode switched off directly has no expiry label. Both menu entries remain available when automatic mode is off, including if disabled in Settings. Clicking Automatic Mode re-enables it; choosing a duration schedules it to resume at the new deadline.
 - The pause survives sleep and agent restart. After it expires, automatic activation still requires
   enabled but disconnected Mac Wi-Fi and the configured disconnect wait. Connected Wi-Fi is left alone.
