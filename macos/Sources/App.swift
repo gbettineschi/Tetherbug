@@ -458,8 +458,7 @@ struct ContentView: View {
                 }
             }
 
-            PreferredWifiSection(hotspotSSID: phone?.ssid, message: state?.preferredWifiMessage,
-                                 prefersHotspot: state?.preferHotspotUntil != nil)
+            PreferredWifiSection(hotspotSSID: phone?.ssid, message: state?.preferredWifiMessage)
 
             Section("General") {
                 if let job = state?.managedBy {

@@ -128,7 +128,6 @@ struct AgentState: Codable, Equatable {
     var requestError: String?
     /// Optional Mac-only preferred-network presence status.
     var preferredWifiMessage: String?
-    var preferHotspotUntil: Date?
     var preferredWifiOffNotBefore: Date?
     /// An explicit menu Quit also tells an open settings window not to restart the agent.
     var stopping: Bool?
@@ -162,7 +161,7 @@ enum Settings {
         set { defaults.set(newValue?.uuidString, forKey: "preferredPhone") }
     }
 
-    /// Ask for the hotspot when the Mac's Wi-Fi has no connection.
+    /// Legacy stored key for Automatic Mode, governing automatic hotspot On and preferred-presence Off.
     static var onNoWifi: Bool {
         get { defaults.object(forKey: "onNoWifi") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "onNoWifi") }

@@ -10,37 +10,14 @@ func runMenuBarTests() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.accessory)
 
-    test("hotspot preference has a native six-hour action and explicit stop") {
-        var selected: AutomaticPauseDuration?
-        var stops = 0
-        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in },
-            onPreferHotspot: { selected = $0 }, onStopPreferringHotspot: { stops += 1 }, onSettings: {}, onQuit: {})
-        var state = phoneState(.off)
-        state.automatic = true
-        menu.update(state)
-        let item = menu.menu.items.first { $0.title == "Prefer hotspot for…" }!
-        let choices = item.submenu!
-        expect(choices.items.contains { $0.title == "6 hours" }, "six hours is offered")
-        expect(!choices.items.contains { $0.title == "Indefinitely" }, "preference is explicitly temporary")
-        expect(choices.items.first?.isEnabled == false, "no stop action when inactive")
-        let six = choices.items.first { $0.title == "6 hours" }!
-        menu.preferHotspot(six)
-        expect(selected == .hours6, "native item routes the selected duration")
-        state.preferHotspotUntil = now + 21600
-        menu.update(state)
-        expect(item.state == .on && choices.items.first?.isEnabled == true, "active state has stop and checkmark")
-        expect(item.attributedTitle?.string.contains("Until") == true, "show expiry")
-        menu.stopPreferringHotspot(nil)
-        expect(stops == 1, "stop has its own callback")
-        item.attributedTitle = nil
-        menu.menu.minimumWidth = 0
-        menu.menu.update()
-        let checked = menu.menu.size.width
-        state.preferHotspotUntil = nil; menu.update(state); menu.menu.update()
-        expect(item.state == .off, "checkmark clears")
-        // Stable image geometry is shared with the already-regressed Automatic Mode row.
-        expect(item.onStateImage?.size == item.offStateImage?.size, "reserve equal checkmark geometry")
-        _ = checked
+    test("Automatic Mode is the only automation menu with timed suspension") {
+        let menu = MenuBarController(onToggle: {}, onAutomatic: { _ in }, onSettings: {}, onQuit: {})
+        var state = phoneState(); state.automatic = true; menu.update(state)
+        expect(!menu.menu.items.contains { $0.title.contains("Prefer hotspot") }, "remove the redundant preference menu")
+        expect(menu.menu.items.contains { $0.title == "Automatic Mode" }, "keep the single master switch")
+        let durations = menu.menu.items.first { $0.title == "Turn off automatic mode for…" }?.submenu
+        expect(durations?.items.contains { $0.title == "6 hours" } == true, "six-hour suspension remains under Automatic Mode")
+        expect(durations?.items.contains { $0.title == "Indefinitely" } == true, "indefinite Off remains available")
     }
 
     test("native command menu width stays stable when the Auto checkmark changes") {

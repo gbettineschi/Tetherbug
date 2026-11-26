@@ -74,8 +74,7 @@ or timed-out check never requests Off and does not strand the Mac waiting indefi
 A native/manual network change gives automatic Off a five-minute courtesy period; it does not
 bypass the presence check before On.
 
-Automatic Mode Off and its timed pauses suspend both automatic actions. “Prefer hotspot for…”
-suspends the preferred-network rule while keeping ordinary disconnected-only activation available.
+Automatic Mode Off and its timed pauses suspend both automatic actions.
 The manual Mobile Hotspot switch remains available. macOS requires Location permission for Wi-Fi
 names; Tetherbug requests it only from Settings and never requests location updates. Sleep and
 DarkWake invalidate queued work. This is entirely Mac-side; Android needs no update.
@@ -106,7 +105,7 @@ The existing background agent also displays a native hotspot icon. No extra help
 
 - **Click or right-click:** open the native menu. Use the **Mobile Hotspot** switch to toggle the hotspot, or change **Automatic mode** in the menu.
 - With **Automatic mode** on, turning the hotspot off pauses activation for **5 minutes**. Turning the hotspot on manually cancels the suspension.
-- Click **Automatic Mode** to turn it off with no deadline, or click it again to resume. The checkmark appears only while automatic activation is active. **Turn off automatic mode for…** offers 15 minutes, 30 minutes, 1 hour, 2 hours, 3 hours, Today (until the next local midnight), and Indefinitely. Each choice replaces the previous deadline rather than adding to it. Indefinitely disables automatic mode with no expiry, just like clicking Automatic Mode off.
+- Click **Automatic Mode** to turn it off with no deadline, or click it again to resume. The checkmark appears only while automatic activation is active. **Turn off automatic mode for…** offers 15 minutes, 30 minutes, 1 hour, 2 hours, 3 hours, 6 hours, Today (until the next local midnight), and Indefinitely. Each choice replaces the previous deadline rather than adding to it. Indefinitely disables automatic mode with no expiry, just like clicking Automatic Mode off.
 - A timed suspension shows **Turned off until…** beside Automatic Mode; mode switched off directly has no expiry label. Both menu entries remain available when automatic mode is off, including if disabled in Settings. Clicking Automatic Mode re-enables it; choosing a duration schedules it to resume at the new deadline.
 - The pause survives sleep and agent restart. After it expires, automatic activation still requires
   enabled but disconnected Mac Wi-Fi and the configured disconnect wait. Connected Wi-Fi is left alone.
@@ -163,16 +162,3 @@ select an installed 26.x SDK using `SDKROOT` for both commands. This local build
 In Automatic mode, a fresh On-to-Off phone status report starts a 5-minute pause only while the Tetherbug Bluetooth connection remains active. Wi-Fi loss by itself does not create a cooldown. Disconnecting Bluetooth clears the status baseline, so an Off state first discovered after reconnection does not count as a nearby shutdown. Automatic cooldowns do not shorten a longer user-selected suspension or re-enable mode that was switched off.
 
 The pause is saved across app restarts and shown beside Automatic mode. Turning Mobile Hotspot on manually from the Mac cancels it. Repeated Off reports do not restart the timer. Android's existing status reports do not identify whether shutdown was manual or Samsung's native idle timeout: both can satisfy the nearby-connected criterion. This is a proximity rule, not proof of a voluntary shutdown.
-
-### Prefer hotspot temporarily
-
-The native menu’s **Prefer hotspot for…** submenu offers 15/30 minutes, 1/2/3/6 hours and Today. Choosing a duration replaces the current deadline; **Stop preferring hotspot** cancels it. The deadline survives restart. Joining another Wi-Fi does not cancel it. Automatic Mode and its pauses remain the overall switch for automation.
-
-While this preference is active, nearby preferred Wi-Fi does not request hotspot Off or suppress
-ordinary disconnected-only On. Tetherbug does not force a switch to the phone network. Healthy or
-broken internet on an associated Wi-Fi does not request On; only confirmed physical disconnection,
-with Wi-Fi powered on, can do that. Use macOS's Wi-Fi menu to select the network you want.
-
-Sleep and DarkWake suspend app radio work and invalidate pending discovery results. A synchronous
-scan already submitted to macOS retains ownership until it returns; no second scan is queued behind
-it. This flow uses no Keychain access, enterprise-authentication request or internet probe.

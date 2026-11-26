@@ -1,6 +1,6 @@
 import Foundation
 
-/// Separate persisted intent: hotspot preference never changes the Automatic Mode suspension.
+/// Native network-change courtesy; Automatic Mode is the sole automation switch.
 final class WifiPreferenceControl {
     private let defaults: UserDefaults
     private var lastNetwork: String?
@@ -10,6 +10,7 @@ final class WifiPreferenceControl {
 
     init(defaults: UserDefaults = Settings.defaults) {
         self.defaults = defaults
+        defaults.removeObject(forKey: "preferHotspotUntil")
         if defaults.object(forKey: "preferredWifiOffNotBefore") == nil,
            let old = defaults.object(forKey: "wifiSwitchNotBefore") as? Date {
             defaults.set(old, forKey: "preferredWifiOffNotBefore")
@@ -17,21 +18,11 @@ final class WifiPreferenceControl {
         defaults.removeObject(forKey: "wifiSwitchNotBefore")
     }
 
-    var hotspotUntil: Date? { defaults.object(forKey: "preferHotspotUntil") as? Date }
     var offNotBefore: Date? { defaults.object(forKey: "preferredWifiOffNotBefore") as? Date }
 
-    func prefersHotspot(now: Date = Date()) -> Bool { hotspotUntil.map { $0 > now } ?? false }
     func canTurnOff(now: Date = Date()) -> Bool { offNotBefore.map { $0 <= now } ?? true }
 
-    func preferHotspot(for duration: AutomaticPauseDuration, now: Date = Date(), calendar: Calendar = .current) {
-        guard let deadline = duration.deadline(from: now, calendar: calendar) else { return }
-        defaults.set(deadline, forKey: "preferHotspotUntil")
-    }
-
-    func stopPreferringHotspot() { defaults.removeObject(forKey: "preferHotspotUntil") }
-
     func refresh(now: Date = Date()) {
-        if let expiry = hotspotUntil, expiry <= now { stopPreferringHotspot() }
         if let expiry = offNotBefore, expiry <= now { defaults.removeObject(forKey: "preferredWifiOffNotBefore") }
     }
 

@@ -32,16 +32,15 @@ func runPreferredWifiPresenceTests() {
         let f = PresenceFixture(); f.policy.tick(); f.scanner.found(["Other"])
         expect(f.offs == 0, "an unrelated network is not a reason to turn Off")
     }
-    test("automatic Off follows the master switch, pause and preference timer") {
-        for gate in 0..<7 {
+    test("automatic Off follows the master switch and pause") {
+        for gate in 0..<6 {
             let f = PresenceFixture()
             switch gate {
             case 0: f.context.automaticActive = false
-            case 1: f.context.preferHotspot = true
-            case 2: f.context.allowed = false
-            case 3: f.context.phoneReady = false
-            case 4: f.context.wifiPoweredOn = false
-            case 5: f.context.locationAllowed = false
+            case 1: f.context.allowed = false
+            case 2: f.context.phoneReady = false
+            case 3: f.context.wifiPoweredOn = false
+            case 4: f.context.locationAllowed = false
             default: f.context.preferred = []
             }
             f.policy.tick()
@@ -49,13 +48,12 @@ func runPreferredWifiPresenceTests() {
         }
     }
     test("an Off gate or list change cannot authorize a late command") {
-        for change in 0..<5 {
+        for change in 0..<4 {
             let f = PresenceFixture(); f.policy.tick()
             switch change {
             case 0: f.context.allowed = false
             case 1: f.context.automaticActive = false
-            case 2: f.context.preferHotspot = true
-            case 3: f.context.preferred = ["Other"]
+            case 2: f.context.preferred = ["Other"]
             default: f.context.courtesyElapsed = false
             }
             f.scanner.found(["Home"])

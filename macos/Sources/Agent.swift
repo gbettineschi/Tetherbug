@@ -101,14 +101,6 @@ final class Agent: NSObject {
                 self?.control.pauseAutomatic(for: duration)
                 self?.automaticControlChanged()
             },
-            onPreferHotspot: { [weak self] duration in
-                self?.wifiPreference.preferHotspot(for: duration)
-                self?.wifiPreferenceChanged()
-            },
-            onStopPreferringHotspot: { [weak self] in
-                self?.wifiPreference.stopPreferringHotspot()
-                self?.wifiPreferenceChanged()
-            },
             onSettings: { [weak self] in self?.openSettings() },
             onQuit: { [weak self] in self?.quit() }
         )
@@ -309,12 +301,6 @@ final class Agent: NSObject {
         tick()
     }
 
-    private func wifiPreferenceChanged() {
-        preferredPresence.cancel()
-        publishControl()
-        tick()
-    }
-
     private func presenceContext() -> PreferredWifiPresence.Context {
         var c = PreferredWifiPresence.Context(allowed: activity.allows(activity.generation) && state.stopping != true,
             automaticActive: control.automaticActive(),
@@ -322,9 +308,8 @@ final class Agent: NSObject {
             canTurnOff: control.canToggle(state), hotspotOn: state.status?.hotspot == .on,
             wifiDisconnected: state.wifiOffline, wifiPoweredOn: false, locationAllowed: false,
             preferred: Settings.preferredWifiNetworks, hotspotSSID: state.status?.ssid)
-        c.preferHotspot = wifiPreference.prefersHotspot()
         c.courtesyElapsed = wifiPreference.canTurnOff()
-        guard c.allowed, c.automaticActive, c.phoneReady, !c.preferHotspot,
+        guard c.allowed, c.automaticActive, c.phoneReady,
               !c.identities.isEmpty else { return c }
         c.locationAllowed = wifiScanner.locationAllowed
         if c.locationAllowed {
@@ -346,7 +331,6 @@ final class Agent: NSObject {
         snapshot.automaticPausedUntil = control.pausedUntil
         snapshot.requestPending = control.isPending
         snapshot.requestError = control.error
-        snapshot.preferHotspotUntil = wifiPreference.prefersHotspot() ? wifiPreference.hotspotUntil : nil
         snapshot.preferredWifiOffNotBefore = wifiPreference.offNotBefore
         state = snapshot
     }

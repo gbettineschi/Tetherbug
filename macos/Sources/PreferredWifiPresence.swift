@@ -30,7 +30,6 @@ final class PreferredWifiPresence {
         var locationAllowed: Bool
         var preferred: [String]
         var hotspotSSID: String?
-        var preferHotspot = false
         var courtesyElapsed = true
 
         var identities: Set<Data> {
@@ -40,7 +39,7 @@ final class PreferredWifiPresence {
         var eligible: Bool {
             guard let hotspotSSID, !hotspotSSID.isEmpty, hotspotSSID.utf8.count <= 32 else { return false }
             return allowed && automaticActive && phoneReady && wifiPoweredOn && locationAllowed &&
-                !preferHotspot && !identities.isEmpty
+                !identities.isEmpty
         }
     }
 

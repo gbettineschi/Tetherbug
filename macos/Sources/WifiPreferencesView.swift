@@ -54,7 +54,6 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
 struct PreferredWifiSection: View {
     var hotspotSSID: String?
     var message: String?
-    var prefersHotspot = false
     @State private var model = WifiPreferencesModel()
     @State private var name = ""
     @Environment(\.scenePhase) private var scenePhase
@@ -62,7 +61,7 @@ struct PreferredWifiSection: View {
     var body: some View {
         Section("Preferred Wi-Fi") {
             Group {
-                Text(prefersHotspot ? "Hotspot preference is active. Nearby Wi-Fi will not turn the hotspot off until it ends." : "Automatic Mode turns the hotspot off when a listed Wi-Fi is nearby. macOS handles connecting to it.")
+                Text("Automatic Mode turns the hotspot off when a listed Wi-Fi is nearby. macOS handles connecting to it.")
                     .font(.callout).foregroundStyle(.secondary)
                 if !model.authorized {
                     Text("macOS requires Location access to identify nearby Wi-Fi. Tetherbug does not track your location.")

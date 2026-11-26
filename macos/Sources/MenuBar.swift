@@ -8,7 +8,6 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private let hotspotItem = NSMenuItem()
     private let automaticItem = NSMenuItem()
     private let durationItem = NSMenuItem()
-    private let preferHotspotItem = NSMenuItem()
     private let errorItem = NSMenuItem()
     private var state = AgentState()
     private var confirmedOn = false
@@ -17,21 +16,15 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private let onToggle: () -> Void
     private let onAutomatic: (Bool) -> Void
     private let onPauseAutomatic: (AutomaticPauseDuration) -> Void
-    private let onPreferHotspot: (AutomaticPauseDuration) -> Void
-    private let onStopPreferringHotspot: () -> Void
     private let onSettings: () -> Void
     private let onQuit: () -> Void
 
     init(onToggle: @escaping () -> Void, onAutomatic: @escaping (Bool) -> Void,
          onPauseAutomatic: @escaping (AutomaticPauseDuration) -> Void = { _ in },
-         onPreferHotspot: @escaping (AutomaticPauseDuration) -> Void = { _ in },
-         onStopPreferringHotspot: @escaping () -> Void = {},
          onSettings: @escaping () -> Void, onQuit: @escaping () -> Void) {
         self.onToggle = onToggle
         self.onAutomatic = onAutomatic
         self.onPauseAutomatic = onPauseAutomatic
-        self.onPreferHotspot = onPreferHotspot
-        self.onStopPreferringHotspot = onStopPreferringHotspot
         self.onSettings = onSettings
         self.onQuit = onQuit
         super.init()
@@ -77,20 +70,6 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         }
         durationItem.submenu = durations
         menu.addItem(durationItem)
-        preferHotspotItem.title = "Prefer hotspot for…"
-        preferHotspotItem.onStateImage = automaticItem.onStateImage
-        preferHotspotItem.offStateImage = automaticItem.offStateImage
-        let preferenceDurations = NSMenu()
-        preferenceDurations.autoenablesItems = false
-        preferenceDurations.addItem(action("Stop preferring hotspot", #selector(stopPreferringHotspot(_:)), key: ""))
-        preferenceDurations.addItem(.separator())
-        for duration in AutomaticPauseDuration.allCases where duration != .indefinitely {
-            let choice = action(duration.title, #selector(preferHotspot(_:)), key: "")
-            choice.representedObject = duration.rawValue
-            preferenceDurations.addItem(choice)
-        }
-        preferHotspotItem.submenu = preferenceDurations
-        menu.addItem(preferHotspotItem)
         menu.addItem(.separator())
         menu.addItem(action("Settings…", #selector(openSettings(_:)), key: ","))
         menu.addItem(action("Quit Tetherbug", #selector(quit(_:)), key: "q"))
@@ -165,17 +144,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             ]))
         }
         automaticItem.attributedTitle = title
-        let preferenceTitle = NSMutableAttributedString(string: "Prefer hotspot for…", attributes: [.font: NSFont.menuFont(ofSize: 0)])
-        if let expiry = state.preferHotspotUntil {
-            preferenceTitle.append(NSAttributedString(string: "    Until \(Self.time(expiry))", attributes: [
-                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor
-            ]))
-        }
-        preferHotspotItem.attributedTitle = preferenceTitle
-        preferHotspotItem.state = state.preferHotspotUntil == nil ? .off : .on
-        preferHotspotItem.isEnabled = automaticAvailable
-        preferHotspotItem.submenu?.items.forEach { $0.isEnabled = automaticAvailable }
-        preferHotspotItem.submenu?.items.first?.isEnabled = automaticAvailable && state.preferHotspotUntil != nil
+
     }
 
     @objc private func changeHotspot(_ sender: Any?) {
@@ -203,15 +172,6 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
               let raw = sender.representedObject as? String,
               let duration = AutomaticPauseDuration(rawValue: raw) else { return }
         onPauseAutomatic(duration)
-    }
-    @objc func preferHotspot(_ sender: NSMenuItem) {
-        guard state.stopping != true, let raw = sender.representedObject as? String,
-              let duration = AutomaticPauseDuration(rawValue: raw), duration != .indefinitely else { return }
-        onPreferHotspot(duration)
-    }
-    @objc func stopPreferringHotspot(_ sender: Any?) {
-        guard state.stopping != true else { return }
-        onStopPreferringHotspot()
     }
     @objc private func openSettings(_ sender: Any?) { onSettings() }
     @objc private func quit(_ sender: Any?) { onQuit() }
