@@ -25,7 +25,6 @@ final class WifiPreferencesModel: NSObject, CLLocationManagerDelegate {
         networks = defaults.stringArray(forKey: "preferredWifiNetworks") ?? []
         super.init()
         location.delegate = self
-        refresh()
     }
 
     func refresh() {
@@ -116,6 +115,7 @@ struct PreferredWifiSection: View {
         }
         .onChange(of: model.enabled) { model.refresh() }
         .onChange(of: scenePhase) { if scenePhase == .active { model.refresh() } }
+        .task { model.refresh() }
     }
 
     private func addTypedNetwork() {
